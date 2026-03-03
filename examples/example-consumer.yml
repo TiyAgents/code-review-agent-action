@@ -11,14 +11,22 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
-      - uses: TiyAgents/code-review-agent-action@v1
+      - name: Skip (OPENAI_API_KEY Not Configured)
+        if: ${{ env.OPENAI_API_KEY == '' }}
+        run: echo "OPENAI_API_KEY is not set. Skip example run."
+
+      - name: Run AI Code Review Action
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        uses: TiyAgents/code-review-agent-action@v1
         with:
           # [必填] GitHub Token，需具备 pull-requests:write 和 issues:write 权限
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
           # [条件必填] OpenAI Key；如果未在这里传，必须在环境变量 OPENAI_API_KEY 提供
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          openai_api_key: ${{ env.OPENAI_API_KEY }}
 
           # [可选] OpenAI Base URL；可选值：任意 OpenAI 兼容 API 基础地址
           # 不传则走默认官方地址；也可通过环境变量 OPENAI_API_BASE 提供
