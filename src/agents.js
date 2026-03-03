@@ -209,6 +209,7 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, 
   let usedChars = 0;
   const sections = [];
   const selectedPaths = [];
+  const truncationNotice = '\n... [patch truncated for context budget]';
 
   for (const file of batchFiles) {
     const header = [
@@ -234,14 +235,19 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, 
     if (remaining <= 0 && sections.length > 0) {
       break;
     }
-
-    let patchBody = patch;
-    if (patchBody.length > remaining && remaining > 64) {
-      patchBody = `${patchBody.slice(0, remaining - 40)}\n... [patch truncated for context budget]`;
+    if (remaining <= 0) {
+      continue;
     }
 
-    if (patchBody.length > remaining && sections.length > 0) {
-      continue;
+    let patchBody = patch;
+    if (patchBody.length > remaining) {
+      if (remaining > truncationNotice.length) {
+        patchBody = `${patchBody.slice(0, remaining - truncationNotice.length)}${truncationNotice}`;
+      } else if (sections.length > 0) {
+        continue;
+      } else {
+        patchBody = patchBody.slice(0, remaining);
+      }
     }
 
     const block = `${staticSection}${patchIntro}${patchBody}${patchOutro}`;

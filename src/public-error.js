@@ -12,6 +12,9 @@ function sanitizePublicErrorDetail(input) {
     .replace(/\bauthorization\s*[:=]\s*(?:bearer|token)\s+[^\s,;]+/gi, 'authorization=<redacted>')
     .replace(/\bauthorization\s*[:=]\s*[^\s,;]+/gi, 'authorization=<redacted>')
     .replace(/\b(?:sk|ghp|gho|ghu|ghs|ghr)[_-][A-Za-z0-9_-]{10,}\b/g, '<redacted-token>')
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '<redacted-token>')
+    .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, '<redacted-token>')
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '<redacted-token>')
     .replace(/\b(api[-_]?key|token|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=<redacted>');
 
   if (out.length > 240) {

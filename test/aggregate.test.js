@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { normalizeFindings, dedupeAndSortFindings } = require('../src/aggregate');
+const { normalizeFindings, dedupeAndSortFindings, groupFindingsBySeverity } = require('../src/aggregate');
 
 test('normalizeFindings filters invalid findings and normalizes fields', () => {
   const allowed = ['src/a.js', 'src/b.js'];
@@ -204,4 +204,27 @@ test('normalizeFindings handles confidence/evidence type anomalies predictably',
   assert.equal(normalized[0].confidence, 0.8);
   assert.equal(normalized[0].side, 'LEFT');
   assert.equal(normalized[0].line, null);
+});
+
+test('groupFindingsBySeverity falls back unknown severities to medium', () => {
+  const unknownSeverityFinding = {
+    path: 'src/a.js',
+    side: 'RIGHT',
+    line: 10,
+    severity: 'warning',
+    title: 'Unknown severity',
+    summary: 'Should not crash grouping',
+    confidence: 0.9,
+    evidence: ['x']
+  };
+
+  const groups = groupFindingsBySeverity([
+    { ...unknownSeverityFinding, severity: 'critical' },
+    unknownSeverityFinding,
+    null
+  ]);
+
+  assert.equal(groups.critical.length, 1);
+  assert.equal(groups.medium.length, 1);
+  assert.equal(groups.medium[0].title, 'Unknown severity');
 });
