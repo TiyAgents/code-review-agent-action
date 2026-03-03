@@ -60,7 +60,7 @@ function getTextBundle(language) {
       none: '- None',
       yes: 'YES',
       no: 'NO',
-      fromSubAgent: (name) => `From SubAgent: ${name}`,
+      fromSubAgentTag: (name) => `[From SubAgent: ${name}]`,
       reasons: 'Reasons',
       structuredDegrade: 'Structured-output summary-only degradation',
       syntheticInline: 'Automated review completed for this PR diff. No concrete inline issue was selected after aggregation.',
@@ -110,7 +110,7 @@ function getTextBundle(language) {
       none: '- 无',
       yes: '是',
       no: '否',
-      fromSubAgent: (name) => `来自 SubAgent：${name}`,
+      fromSubAgentTag: (name) => `[来自 SubAgent：${name}]`,
       reasons: '原因',
       structuredDegrade: '结构化输出降级为仅汇总评论',
       syntheticInline: '自动审查已完成；聚合后没有可稳定定位的具体 inline 问题。',
@@ -180,7 +180,7 @@ function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
 
 function buildInlineBody(finding, text) {
   const lines = [];
-  const subAgent = String(finding.category || 'general').trim().toLowerCase() || 'general';
+  const subAgent = String(finding.sourceDimension || 'general').trim().toLowerCase() || 'general';
   lines.push(`**[${finding.severity.toUpperCase()}] ${finding.title}**`);
   lines.push(finding.summary);
 
@@ -192,7 +192,7 @@ function buildInlineBody(finding, text) {
     lines.push(`${text.riskLabel}: ${finding.risk}`);
   }
 
-  lines.push(`_${text.fromSubAgent(subAgent)}_`);
+  lines.push(`<div align="right">${text.fromSubAgentTag(subAgent)}</div>`);
 
   return lines.join('\n\n');
 }
@@ -690,7 +690,11 @@ async function runAction() {
 
         for (const result of batchResultByDimension) {
           for (const finding of result.output.findings || []) {
-            rawFindings.push({ ...finding, category: finding.category || result.dimension });
+            rawFindings.push({
+              ...finding,
+              category: finding.category || result.dimension,
+              sourceDimension: result.dimension
+            });
           }
 
           for (const suggestion of result.output.actionableSuggestions || []) {

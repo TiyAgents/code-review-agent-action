@@ -120,7 +120,10 @@ function mergeFinding(base, incoming) {
     severity,
     confidence: Math.max(base.confidence, incoming.confidence),
     evidence: mergedEvidence,
-    fingerprint: base.fingerprint || incoming.fingerprint
+    fingerprint: base.fingerprint || incoming.fingerprint,
+    sourceDimension: preferIncoming
+      ? (incoming.sourceDimension || base.sourceDimension || 'general')
+      : (base.sourceDimension || incoming.sourceDimension || 'general')
   };
 }
 
@@ -154,6 +157,7 @@ function normalizeFindings(findings, allowedPaths, options = {}) {
       suggestion: String(finding.suggestion || '').trim(),
       risk: String(finding.risk || '').trim(),
       category: String(finding.category || 'general').trim().toLowerCase(),
+      sourceDimension: String(finding.sourceDimension || 'general').trim().toLowerCase() || 'general',
       severity,
       path,
       side,
