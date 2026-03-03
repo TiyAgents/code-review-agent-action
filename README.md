@@ -19,6 +19,7 @@ This action:
 - Duplicate suppression for same `head_sha` + same digest.
 - Configurable review language via `review_language` (default `English`).
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
+- Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
 
 ## Usage
 

@@ -17,6 +17,7 @@ const {
   dedupeAndSortFindings,
   groupFindingsBySeverity
 } = require('./aggregate');
+const { loadProjectGuidance } = require('./repo-guidance');
 const { upsertSummaryComment, createReview } = require('./publish');
 
 function getTextBundle(language) {
@@ -323,6 +324,19 @@ async function runAction() {
   const headSha = pr.head.sha;
 
   const octokit = github.getOctokit(config.githubToken);
+  const projectGuidance = await loadProjectGuidance(octokit, {
+    owner,
+    repo,
+    ref: headSha
+  });
+
+  if (projectGuidance.found) {
+    core.info(`Loaded repository guidance from ${projectGuidance.path}.`);
+  } else if (projectGuidance.error) {
+    core.warning(`Failed to load repository guidance file: ${projectGuidance.error}`);
+  } else {
+    core.info('No repository guidance file found (AGENTS.md / AGENT.md / CLAUDE.md).');
+  }
 
   core.info(`Loading PR files for ${owner}/${repo}#${pullNumber}`);
   const allFiles = await listPullFiles(octokit, owner, repo, pullNumber);
@@ -375,13 +389,17 @@ async function runAction() {
       baseURL: config.openaiApiBase || undefined
     });
 
-    const planner = createPlannerAgent(config.plannerModel);
+    const planner = createPlannerAgent({
+      model: config.plannerModel,
+      projectGuidance
+    });
     const reviewerAgents = {};
     for (const dimension of config.reviewDimensions) {
       reviewerAgents[dimension] = createReviewerAgent({
         dimension,
         model: config.reviewerModel,
-        language: config.reviewLanguage
+        language: config.reviewLanguage,
+        projectGuidance
       });
     }
 
@@ -460,7 +478,8 @@ async function runAction() {
           const agent = reviewerAgents[dimension] || createReviewerAgent({
             dimension,
             model: config.reviewerModel,
-            language: config.reviewLanguage
+            language: config.reviewLanguage,
+            projectGuidance
           });
           reviewerAgents[dimension] = agent;
 
