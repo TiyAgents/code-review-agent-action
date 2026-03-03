@@ -83,3 +83,26 @@ test('resolveInlineLocation falls back to available side for unknown side', () =
   assert.equal(unknown.ok, true);
   assert.equal(unknown.side, 'RIGHT');
 });
+
+test('buildDiffLineMaps does not misclassify code lines starting with +++ or --- as file headers', () => {
+  const map = buildDiffLineMaps([
+    {
+      filename: 'src/a.js',
+      patch: [
+        '@@ -1,3 +1,3 @@',
+        ' const x = 1;',
+        '+++guard_added',
+        '---legacy_removed',
+        ' const y = 2;'
+      ].join('\n')
+    }
+  ]);
+
+  const rightAdded = resolveInlineLocation({ path: 'src/a.js', side: 'RIGHT', line: 2 }, map);
+  const leftRemoved = resolveInlineLocation({ path: 'src/a.js', side: 'LEFT', line: 2 }, map);
+  const trailingContext = resolveInlineLocation({ path: 'src/a.js', side: 'RIGHT', line: 3 }, map);
+
+  assert.equal(rightAdded.ok, true);
+  assert.equal(leftRemoved.ok, true);
+  assert.equal(trailingContext.ok, true);
+});

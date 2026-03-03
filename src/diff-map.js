@@ -5,6 +5,7 @@ function parsePatchLines(patch) {
   const lines = patch.split('\n');
   let oldLine = 0;
   let newLine = 0;
+  let inHunk = false;
 
   for (const rawLine of lines) {
     const line = rawLine || '';
@@ -17,10 +18,11 @@ function parsePatchLines(patch) {
 
       oldLine = Number.parseInt(match[1], 10);
       newLine = Number.parseInt(match[2], 10);
+      inHunk = true;
       continue;
     }
 
-    if (line.startsWith('+++') || line.startsWith('---')) {
+    if (!inHunk) {
       continue;
     }
 
