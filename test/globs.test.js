@@ -14,3 +14,12 @@ test('filterFiles applies include and exclude globs', () => {
   assert.deepEqual(result.map((x) => x.filename), ['src/a.ts']);
 });
 
+test('filterFiles handles undefined include/exclude patterns safely', () => {
+  const files = [
+    { filename: 'src/a.ts' },
+    { filename: 'docs/readme.md' }
+  ];
+
+  const result = filterFiles(files, undefined, null);
+  assert.deepEqual(result.map((x) => x.filename), ['src/a.ts', 'docs/readme.md']);
+});

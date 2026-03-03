@@ -9,9 +9,13 @@ function matchesAny(path, patterns) {
 }
 
 function filterFiles(files, includePatterns, excludePatterns) {
-  return files.filter((file) => {
-    const included = includePatterns.length === 0 ? true : matchesAny(file.filename, includePatterns);
-    const excluded = matchesAny(file.filename, excludePatterns);
+  const fileList = Array.isArray(files) ? files : [];
+  const includes = Array.isArray(includePatterns) ? includePatterns.filter(Boolean) : [];
+  const excludes = Array.isArray(excludePatterns) ? excludePatterns.filter(Boolean) : [];
+
+  return fileList.filter((file) => {
+    const included = includes.length === 0 ? true : matchesAny(file.filename, includes);
+    const excluded = matchesAny(file.filename, excludes);
     return included && !excluded;
   });
 }

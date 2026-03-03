@@ -12,12 +12,17 @@ function markerMetaTag(marker, meta) {
   return `<!-- ${marker}:meta ${JSON.stringify(meta)} -->`;
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parseMarkerMeta(marker, body) {
   if (!body) {
     return null;
   }
 
-  const regex = new RegExp(`<!--\\s*${marker}:meta\\s+(.+?)\\s*-->`);
+  const escapedMarker = escapeRegex(marker);
+  const regex = new RegExp(`<!--\\s*${escapedMarker}:meta\\s+(.+?)\\s*-->`);
   const match = body.match(regex);
   if (!match) {
     return null;
