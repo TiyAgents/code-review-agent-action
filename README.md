@@ -22,6 +22,7 @@ This action:
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
 - Tracing is automatically disabled when `OPENAI_API_BASE` is set (to avoid non-fatal tracing auth errors on custom gateways).
+- General-first routing: batch review starts with `general`, and only `general` can dynamically request extra dimensions for that batch.
 
 ## Usage
 
@@ -62,9 +63,9 @@ jobs:
           min_finding_confidence: 0.72
           coverage_first_round_primary_only: true
           max_rounds: 8
-          max_model_calls: 128
+          max_model_calls: 128 # example override (default: 40)
           max_files_per_batch: 8
-          max_context_chars: 256000
+          max_context_chars: 256000 # example override (default: 128000)
           max_findings: 60
           max_inline_comments: 30
 ```

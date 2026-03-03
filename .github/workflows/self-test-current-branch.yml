@@ -44,7 +44,8 @@ jobs:
           exclude: |
             **/node_modules/**
             **/dist/**
-          review_language: English
+          review_language: 简体中文
+          coverage_first_round_primary_only: true
           max_rounds: 2
           max_model_calls: 64
           max_files_per_batch: 8

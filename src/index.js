@@ -113,6 +113,10 @@ function uniqueItems(items) {
   return [...new Set((items || []).map((i) => String(i || '').trim()).filter(Boolean))];
 }
 
+function normalizeDimensionNames(items) {
+  return uniqueItems(items).map((x) => x.toLowerCase());
+}
+
 function chunk(items, chunkSize) {
   const out = [];
   for (let i = 0; i < items.length; i += chunkSize) {
@@ -536,8 +540,21 @@ async function runAction() {
 
         const batchResultByDimension = [];
         let batchSuccessful = false;
-
+        const executionDimensions = [];
+        if (roundDimensions.includes('general')) {
+          executionDimensions.push('general');
+        }
         for (const dimension of roundDimensions) {
+          if (dimension !== 'general') {
+            executionDimensions.push(dimension);
+          }
+        }
+        if (executionDimensions.length === 0 && roundDimensions.length > 0) {
+          executionDimensions.push(roundDimensions[0]);
+        }
+
+        for (let dimIndex = 0; dimIndex < executionDimensions.length; dimIndex += 1) {
+          const dimension = executionDimensions[dimIndex];
           if (modelCalls >= config.maxModelCalls) {
             break;
           }
@@ -554,7 +571,8 @@ async function runAction() {
             dimension,
             round,
             batchFiles,
-            maxContextChars: config.maxContextChars
+            maxContextChars: config.maxContextChars,
+            availableDimensions: config.reviewDimensions
           });
 
           if (reviewInput.selectedPaths.length === 0) {
@@ -592,6 +610,26 @@ async function runAction() {
           core.info(
             `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) done: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} findings=${findingCount} file_conclusions=${fileConclusionCount} suggestions=${suggestionCount}`
           );
+
+          if (dimension === 'general') {
+            const recommended = normalizeDimensionNames(reviewResult.output.recommendedExtraDimensions || [])
+              .filter((x) => x !== 'general')
+              .filter((x) => config.reviewDimensions.includes(x));
+            const appendable = recommended.filter((x) => !executionDimensions.includes(x));
+            const recommendationReason = String(reviewResult.output.recommendationReason || '').trim();
+
+            if (appendable.length > 0) {
+              executionDimensions.push(...appendable);
+              core.info(
+                `Round ${round} Batch ${batchIndex + 1}: general requested extra dimensions=${appendable.join(', ')}${recommendationReason ? ` reason=${recommendationReason}` : ''}`
+              );
+            } else if (recommendationReason) {
+              core.info(
+                `Round ${round} Batch ${batchIndex + 1}: general recommendation note=${recommendationReason}`
+              );
+            }
+          }
+
           batchSuccessful = true;
           batchResultByDimension.push({
             dimension,

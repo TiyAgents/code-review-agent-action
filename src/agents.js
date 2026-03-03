@@ -45,6 +45,8 @@ const reviewOutputSchema = z.object({
   overall: z.string().min(1),
   findings: z.array(findingSchema).default([]),
   fileConclusions: z.array(fileConclusionSchema).default([]),
+  recommendedExtraDimensions: z.array(z.string()).default([]),
+  recommendationReason: z.string().default(''),
   actionableSuggestions: z.array(z.string()).default([]),
   potentialRisks: z.array(z.string()).default([]),
   testSuggestions: z.array(z.string()).default([])
@@ -125,6 +127,8 @@ Rules:
 - Use fingerprint as stable short key for same issue across dimensions (e.g. unsafe_openai_base_url, planner_done_ignored).
 - Keep findings concrete, actionable, and concise.
 - Provide file-level conclusions for all files in this batch, including no-risk files.
+- If you are the general reviewer, use recommendedExtraDimensions to request additional specialized review dimensions when needed (for example security/performance/testing), and explain with recommendationReason.
+- If you are not the general reviewer, set recommendedExtraDimensions=[] and recommendationReason="".
 Output must follow schema exactly.`,
     outputType: reviewOutputSchema
   });
@@ -201,7 +205,7 @@ function buildPlannerInput({ round, maxRounds, budgetRemaining, maxFilesPerBatch
   ].join('\n');
 }
 
-function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars }) {
+function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, availableDimensions }) {
   let usedChars = 0;
   const sections = [];
   const selectedPaths = [];
@@ -253,6 +257,7 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars }
   const prompt = [
     `dimension=${dimension}`,
     `round=${round}`,
+    `availableDimensions=${(availableDimensions || []).join(',')}`,
     'Review the following batch and return schema output.',
     ...sections
   ].join('\n');
