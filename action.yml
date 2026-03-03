@@ -1,8 +1,12 @@
-name: AI Code Review Agent
+name: PR Review Agent
 
 description: PR code review action using OpenAI Agents SDK with inline comments and summary updates.
 
-author: code-review-agent-action
+author: TiyAgents Team
+
+branding:
+  icon: code
+  color: blue
 
 inputs:
   github_token:
