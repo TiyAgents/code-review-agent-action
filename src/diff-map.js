@@ -72,7 +72,7 @@ function resolveInlineLocation(finding, diffMap) {
   }
 
   const lineMap = diffMap.get(finding.path);
-  const requestedSide = finding.side || 'RIGHT';
+  const requestedSide = String(finding.side || 'RIGHT').toUpperCase();
   const line = Number.isInteger(finding.line) ? finding.line : null;
 
   if (!line || line < 1) {

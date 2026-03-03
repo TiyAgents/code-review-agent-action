@@ -42,7 +42,7 @@ test('resolveInlineLocation fails when path not in map', () => {
   assert.equal(result.reason, 'path_not_in_commentable_diff');
 });
 
-test('resolveInlineLocation handles side case-insensitively via fallback behavior', () => {
+test('resolveInlineLocation handles side case-insensitively', () => {
   const map = buildDiffLineMaps([
     {
       filename: 'src/a.js',
@@ -62,7 +62,22 @@ test('resolveInlineLocation handles side case-insensitively via fallback behavio
 
   const lowerLeft = resolveInlineLocation({ path: 'src/a.js', side: 'left', line: 2 }, map);
   assert.equal(lowerLeft.ok, true);
-  assert.equal(lowerLeft.side, 'RIGHT');
+  assert.equal(lowerLeft.side, 'LEFT');
+});
+
+test('resolveInlineLocation falls back to available side for unknown side', () => {
+  const map = buildDiffLineMaps([
+    {
+      filename: 'src/a.js',
+      patch: [
+        '@@ -1,2 +1,3 @@',
+        ' const x = 1;',
+        '-const y = 2;',
+        '+const y = 3;',
+        '+const z = 4;'
+      ].join('\n')
+    }
+  ]);
 
   const unknown = resolveInlineLocation({ path: 'src/a.js', side: 'UNKNOWN', line: 2 }, map);
   assert.equal(unknown.ok, true);
