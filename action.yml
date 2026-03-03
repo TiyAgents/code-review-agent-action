@@ -1,0 +1,78 @@
+name: AI Code Review Agent
+
+description: PR code review action using OpenAI Agents SDK with inline comments and summary updates.
+
+author: code-review-agent-action
+
+inputs:
+  github_token:
+    description: GitHub token with pull-requests:write and issues:write permissions.
+    required: true
+  openai_api_key:
+    description: OpenAI API key. Falls back to OPENAI_API_KEY env.
+    required: false
+  openai_api_base:
+    description: Optional OpenAI API base URL. Falls back to OPENAI_API_BASE env.
+    required: false
+  include:
+    description: Include globs (comma/newline separated).
+    required: false
+    default: "**"
+  exclude:
+    description: Exclude globs (comma/newline separated).
+    required: false
+    default: ""
+  planner_model:
+    description: Planner model name.
+    required: false
+    default: gpt-5.3-codex
+  reviewer_model:
+    description: Reviewer model name.
+    required: false
+    default: gpt-5.3-codex
+  review_dimensions:
+    description: Comma/newline separated dimensions (general,security,performance,testing).
+    required: false
+    default: general,security,performance,testing
+  review_language:
+    description: Preferred language for review comments and summary.
+    required: false
+    default: English
+  max_rounds:
+    description: Maximum planning/review rounds.
+    required: false
+    default: "8"
+  max_model_calls:
+    description: Maximum model calls across planner/subagents.
+    required: false
+    default: "40"
+  max_files_per_batch:
+    description: Maximum files per planned batch.
+    required: false
+    default: "8"
+  max_context_chars:
+    description: Maximum chars sent for one batch context.
+    required: false
+    default: "128000"
+  max_findings:
+    description: Maximum findings kept after aggregation.
+    required: false
+    default: "60"
+  max_inline_comments:
+    description: Maximum inline comments posted in PR review.
+    required: false
+    default: "30"
+
+outputs:
+  covered_files:
+    description: Number of covered files.
+  target_files:
+    description: Number of filtered target files.
+  uncovered_files:
+    description: Number of uncovered files.
+  degraded:
+    description: Whether fallback/degradation happened.
+
+runs:
+  using: docker
+  image: Dockerfile

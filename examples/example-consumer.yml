@@ -1,0 +1,79 @@
+name: Example Consumer Workflow
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: TiyAgents/code-review-agent-action@v1
+        with:
+          # [必填] GitHub Token，需具备 pull-requests:write 和 issues:write 权限
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+          # [条件必填] OpenAI Key；如果未在这里传，必须在环境变量 OPENAI_API_KEY 提供
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+
+          # [可选] OpenAI Base URL；可选值：任意 OpenAI 兼容 API 基础地址
+          # 不传则走默认官方地址；也可通过环境变量 OPENAI_API_BASE 提供
+          openai_api_base: ${{ vars.OPENAI_API_BASE }}
+
+          # [可选] include globs（逗号或换行分隔）；默认 **（全量）
+          # 可选值：任意 glob 模式
+          include: |
+            **/*.js
+            **/*.ts
+            **/*.py
+
+          # [可选] exclude globs（逗号或换行分隔）；默认空
+          # 可选值：任意 glob 模式
+          exclude: |
+            **/*.lock
+            **/dist/**
+            **/*.min.js
+
+          # [可选] Planner 使用模型；默认 gpt-5.3-codex
+          # 可选值：任意可用模型名（字符串）
+          planner_model: gpt-5.3-codex
+
+          # [可选] SubAgent 使用模型；默认 gpt-5.3-codex
+          # 可选值：任意可用模型名（字符串）
+          reviewer_model: gpt-5.3-codex
+
+          # [可选] 审查维度（逗号或换行分隔）；默认 general,security,performance,testing
+          # 可选值建议：general, security, performance, testing
+          review_dimensions: general,security,performance,testing
+
+          # [可选] 评论语言；默认 English
+          # 可选值：任意语言描述（如 English、Chinese、简体中文）
+          review_language: English
+
+          # [可选] 最大轮次；默认 8
+          # 取值范围：正整数（>=1）
+          max_rounds: 8
+
+          # [可选] 最大模型调用次数；默认 40
+          # 取值范围：正整数（>=1）
+          max_model_calls: 40
+
+          # [可选] 单批最多文件数；默认 8
+          # 取值范围：正整数（>=1）
+          max_files_per_batch: 8
+
+          # [可选] 单批上下文最大字符数；默认 128000
+          # 取值范围：正整数（>=1）
+          max_context_chars: 128000
+
+          # [可选] 聚合后最多保留 findings 数；默认 60
+          # 取值范围：正整数（>=1）
+          max_findings: 60
+
+          # [可选] PR Review 最多发布 inline comments 数；默认 30
+          # 取值范围：正整数（>=1）
+          max_inline_comments: 30
