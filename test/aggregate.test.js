@@ -150,3 +150,58 @@ test('dedupeAndSortFindings keeps deterministic order on same severity/confidenc
     ['a.js:4', 'a.js:9', 'b.js:1']
   );
 });
+
+test('normalizeFindings keeps confidence at threshold and normalizes side/line edge values', () => {
+  const allowed = ['src/a.js'];
+  const findings = [
+    {
+      path: 'src/a.js',
+      title: 'Edge confidence',
+      summary: 'Confidence exactly on threshold should be kept',
+      severity: 'MEDIUM',
+      side: 'weird',
+      line: 0,
+      confidence: 0.72,
+      evidence: ['edge']
+    }
+  ];
+
+  const normalized = normalizeFindings(findings, allowed, { minConfidence: 0.72 });
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].side, 'RIGHT');
+  assert.equal(normalized[0].line, null);
+  assert.equal(normalized[0].confidence, 0.72);
+});
+
+test('normalizeFindings handles confidence/evidence type anomalies predictably', () => {
+  const allowed = ['src/a.js'];
+  const findings = [
+    {
+      path: 'src/a.js',
+      title: 'NaN confidence defaults',
+      summary: 'NaN confidence should fall back to default 0.8',
+      severity: 'LOW',
+      side: 'LEFT',
+      line: -2,
+      confidence: Number.NaN,
+      evidence: ['e1']
+    },
+    {
+      path: 'src/a.js',
+      title: 'Non-array evidence drops finding',
+      summary: 'Evidence must be array and non-empty',
+      severity: 'LOW',
+      side: 'LEFT',
+      line: 5,
+      confidence: 0.9,
+      evidence: 'not-array'
+    }
+  ];
+
+  const normalized = normalizeFindings(findings, allowed, { minConfidence: 0.72 });
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].title, 'NaN confidence defaults');
+  assert.equal(normalized[0].confidence, 0.8);
+  assert.equal(normalized[0].side, 'LEFT');
+  assert.equal(normalized[0].line, null);
+});

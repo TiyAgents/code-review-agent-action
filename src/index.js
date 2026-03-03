@@ -147,6 +147,10 @@ function addPublicDegradedReason(reasons, code, detail) {
   reasons.push(`${code}: ${sanitizePublicErrorDetail(detail)}`);
 }
 
+function getErrorMessage(error, fallback = 'unknown_error') {
+  return String(error?.message || error || fallback);
+}
+
 function sanitizePlannedBatches(batches, pendingPathSet, maxFilesPerBatch) {
   const out = [];
 
@@ -498,13 +502,14 @@ async function runAction() {
       let plannedBatches = [];
       let plannerRequestedStop = false;
       if (!plannerResult.ok) {
+        const plannerErrorMessage = getErrorMessage(plannerResult.error);
         degradedSummaryOnly = true;
         addPublicDegradedReason(
           degradedReasons,
           `planner_structured_output_failed_round_${round}`,
-          plannerResult.error && (plannerResult.error.message || String(plannerResult.error))
+          plannerErrorMessage
         );
-        core.warning(`Round ${round}: planner failed structured output. ${plannerResult.error.message}`);
+        core.warning(`Round ${round}: planner failed structured output. ${plannerErrorMessage}`);
       } else {
         plannedBatches = sanitizePlannedBatches(
           plannerResult.output.batches,
@@ -640,14 +645,15 @@ async function runAction() {
           const elapsedMs = Date.now() - agentStart;
 
           if (!reviewResult.ok) {
+            const reviewerErrorMessage = getErrorMessage(reviewResult.error);
             degradedSummaryOnly = true;
             addPublicDegradedReason(
               degradedReasons,
               `reviewer_structured_output_failed_round_${round}_${dimension}`,
-              reviewResult.error && (reviewResult.error.message || String(reviewResult.error))
+              reviewerErrorMessage
             );
             core.warning(
-              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewResult.error.message}`
+              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewerErrorMessage}`
             );
             continue;
           }

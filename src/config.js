@@ -10,6 +10,42 @@ function splitListInput(value) {
     .filter(Boolean);
 }
 
+function normalizeHost(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function validateOpenAIBaseURL(openaiApiBase, allowedHosts) {
+  const raw = String(openaiApiBase || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Input openai_api_base must be a valid URL, got: ${raw}`);
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Input openai_api_base must use https scheme, got: ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Input openai_api_base must not contain username/password credentials.');
+  }
+
+  const host = normalizeHost(parsed.hostname);
+  const allow = new Set((allowedHosts || []).map(normalizeHost).filter(Boolean));
+  if (!allow.has(host)) {
+    throw new Error(
+      `Input openai_api_base host is not in allowlist: ${host}. ` +
+      'Set openai_api_base_allowlist to explicitly trust this host.'
+    );
+  }
+
+  return raw;
+}
+
 function parsePositiveIntInput(name, defaultValue) {
   const raw = core.getInput(name) || String(defaultValue);
   const parsed = Number.parseInt(raw, 10);
@@ -56,7 +92,11 @@ function uniqueLowercase(items) {
 function loadConfig() {
   const githubToken = core.getInput('github_token', { required: true });
   const openaiApiKey = core.getInput('openai_api_key') || process.env.OPENAI_API_KEY;
-  const openaiApiBase = core.getInput('openai_api_base') || process.env.OPENAI_API_BASE || '';
+  const openaiApiBaseRaw = core.getInput('openai_api_base') || process.env.OPENAI_API_BASE || '';
+  const openaiApiBaseAllowlist = splitListInput(
+    core.getInput('openai_api_base_allowlist') || process.env.OPENAI_API_BASE_ALLOWLIST || 'api.openai.com'
+  );
+  const openaiApiBase = validateOpenAIBaseURL(openaiApiBaseRaw, openaiApiBaseAllowlist);
 
   if (!openaiApiKey) {
     throw new Error('Missing OpenAI API key. Provide input openai_api_key or OPENAI_API_KEY env.');
@@ -75,6 +115,7 @@ function loadConfig() {
     githubToken,
     openaiApiKey,
     openaiApiBase,
+    openaiApiBaseAllowlist,
     include,
     exclude,
     plannerModel: core.getInput('planner_model') || 'gpt-5.3-codex',

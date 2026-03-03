@@ -138,6 +138,123 @@ test('upsertSummaryComment updates comment when digest or headSha changes', asyn
   assert.equal(updatedCommentId, 77);
 });
 
+test('upsertSummaryComment updates when existing meta marker is malformed JSON', async () => {
+  let updatedCommentId = null;
+  const existingBody = [
+    '<!-- ai-code-review-agent:summary -->',
+    '<!-- ai-code-review-agent:summary:meta {invalid-json} -->',
+    'old'
+  ].join('\n\n');
+
+  const octokit = {
+    paginate: async () => [{ id: 88, body: existingBody }],
+    rest: {
+      issues: {
+        listComments: () => {
+        },
+        createComment: async () => {
+          throw new Error('create should not be called');
+        },
+        updateComment: async ({ comment_id }) => {
+          updatedCommentId = comment_id;
+        }
+      }
+    }
+  };
+
+  const result = await upsertSummaryComment(octokit, {
+    owner: 'o',
+    repo: 'r',
+    issueNumber: 1,
+    summaryMarker: 'ai-code-review-agent:summary',
+    headSha: 'sha1',
+    summaryMarkdown: 'new body'
+  });
+
+  assert.equal(result.updated, true);
+  assert.equal(result.skipped, false);
+  assert.equal(updatedCommentId, 88);
+});
+
+test('upsertSummaryComment updates when existing marker has no meta block', async () => {
+  let updatedCommentId = null;
+  const existingBody = [
+    '<!-- ai-code-review-agent:summary -->',
+    'old'
+  ].join('\n\n');
+
+  const octokit = {
+    paginate: async () => [{ id: 66, body: existingBody }],
+    rest: {
+      issues: {
+        listComments: () => {
+        },
+        createComment: async () => {
+          throw new Error('create should not be called');
+        },
+        updateComment: async ({ comment_id }) => {
+          updatedCommentId = comment_id;
+        }
+      }
+    }
+  };
+
+  const result = await upsertSummaryComment(octokit, {
+    owner: 'o',
+    repo: 'r',
+    issueNumber: 1,
+    summaryMarker: 'ai-code-review-agent:summary',
+    headSha: 'sha1',
+    summaryMarkdown: 'new body'
+  });
+
+  assert.equal(result.updated, true);
+  assert.equal(result.skipped, false);
+  assert.equal(updatedCommentId, 66);
+});
+
+test('upsertSummaryComment updates the latest marker comment when multiple exist', async () => {
+  let updatedCommentId = null;
+  const comments = [
+    {
+      id: 11,
+      body: '<!-- ai-code-review-agent:summary -->\n\n<!-- ai-code-review-agent:summary:meta {"headSha":"old","digest":"old"} -->'
+    },
+    {
+      id: 22,
+      body: '<!-- ai-code-review-agent:summary -->\n\n<!-- ai-code-review-agent:summary:meta {"headSha":"old","digest":"older"} -->'
+    }
+  ];
+
+  const octokit = {
+    paginate: async () => comments,
+    rest: {
+      issues: {
+        listComments: () => {
+        },
+        createComment: async () => {
+          throw new Error('create should not be called');
+        },
+        updateComment: async ({ comment_id }) => {
+          updatedCommentId = comment_id;
+        }
+      }
+    }
+  };
+
+  const result = await upsertSummaryComment(octokit, {
+    owner: 'o',
+    repo: 'r',
+    issueNumber: 1,
+    summaryMarker: 'ai-code-review-agent:summary',
+    headSha: 'new',
+    summaryMarkdown: 'new body'
+  });
+
+  assert.equal(result.updated, true);
+  assert.equal(updatedCommentId, 22);
+});
+
 test('createReview downgrades inline comments when GitHub rejects inline location', async () => {
   const createCalls = [];
   const octokit = {
@@ -172,6 +289,12 @@ test('createReview downgrades inline comments when GitHub rejects inline locatio
   assert.equal(result.downgradedInline, true);
   assert.equal(result.inlineCount, 0);
   assert.equal(createCalls.length, 2);
+  assert.equal(createCalls[0].event, 'COMMENT');
+  assert.equal(createCalls[0].commit_id, 'sha2');
+  assert.match(createCalls[0].body, /ai-code-review-agent:review/);
+  assert.match(createCalls[0].body, /"headSha":"sha2"/);
+  assert.match(createCalls[0].body, /"digest":"d1"/);
+  assert.equal(createCalls[0].comments[0].path, 'a.js');
   assert.match(createCalls[1].body, /Inline comments were downgraded/);
 });
 
@@ -240,8 +363,14 @@ test('createReview filters historical duplicate inline comments by location and 
   assert.equal(result.downgradedInline, false);
   assert.equal(result.inlineCount, 1);
   assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].event, 'COMMENT');
+  assert.equal(createCalls[0].commit_id, 'sha3');
+  assert.match(createCalls[0].body, /ai-code-review-agent:review/);
+  assert.match(createCalls[0].body, /"headSha":"sha3"/);
+  assert.match(createCalls[0].body, /"digest":"d2"/);
   assert.equal(createCalls[0].comments.length, 1);
   assert.equal(createCalls[0].comments[0].line, 12);
+  assert.match(createCalls[0].comments[0].body, /ai-code-review-agent:inline-key new_issue/);
 });
 
 test('createReview does not suppress duplicates from minimized historical comments', async () => {

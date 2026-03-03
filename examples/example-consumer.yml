@@ -1,4 +1,4 @@
-name: Example Consumer Workflow
+name: Code Reviewer Workflow
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Check OPENAI_API_KEY
         if: ${{ env.OPENAI_API_KEY == '' }}
-        run: echo "OPENAI_API_KEY is not set. Skip example run."
+        run: echo "OPENAI_API_KEY is not set. Skip review run."
 
       - name: Run AI Code Review Action
         if: ${{ env.OPENAI_API_KEY != '' }}
@@ -32,6 +32,12 @@ jobs:
           # [Optional] OpenAI base URL; any OpenAI-compatible API base URL
           # If omitted, default official base is used; can also come from OPENAI_API_BASE
           openai_api_base: ${{ vars.OPENAI_API_BASE }}
+
+          # [Optional] Allowed hosts for openai_api_base (comma/newline separated); default api.openai.com
+          # Required when using a custom OpenAI-compatible gateway host
+          openai_api_base_allowlist: |
+            api.openai.com
+            your-gateway.example.com
 
           # [Optional] Include globs (comma or newline separated); default is ** (all files)
           # Allowed values: any valid glob patterns

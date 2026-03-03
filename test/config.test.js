@@ -46,6 +46,7 @@ test('loadConfig applies defaults for confidence and coverage-first mode', () =>
   assert.equal(config.minFindingConfidence, 0.72);
   assert.equal(config.coverageFirstRoundPrimaryOnly, true);
   assert.equal(config.autoMinimizeOutdatedComments, true);
+  assert.deepEqual(config.openaiApiBaseAllowlist, ['api.openai.com']);
 });
 
 test('loadConfig parses custom confidence and coverage-first mode', () => {
@@ -54,12 +55,16 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
     openai_api_key: 'sk-test',
     min_finding_confidence: '0.85',
     coverage_first_round_primary_only: 'false',
-    auto_minimize_outdated_comments: 'false'
+    auto_minimize_outdated_comments: 'false',
+    openai_api_base: 'https://gateway.example.com/v1',
+    openai_api_base_allowlist: 'api.openai.com, gateway.example.com'
   });
 
   assert.equal(config.minFindingConfidence, 0.85);
   assert.equal(config.coverageFirstRoundPrimaryOnly, false);
   assert.equal(config.autoMinimizeOutdatedComments, false);
+  assert.equal(config.openaiApiBase, 'https://gateway.example.com/v1');
+  assert.deepEqual(config.openaiApiBaseAllowlist, ['api.openai.com', 'gateway.example.com']);
 });
 
 test('loadConfig rejects invalid confidence range', () => {
@@ -81,4 +86,28 @@ test('loadConfig normalizes and deduplicates review_dimensions while preserving 
   });
 
   assert.deepEqual(config.reviewDimensions, ['general', 'security', 'testing']);
+});
+
+test('loadConfig rejects non-https openai_api_base', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      openai_api_base: 'http://gateway.example.com/v1',
+      openai_api_base_allowlist: 'gateway.example.com'
+    }),
+    /must use https scheme/
+  );
+});
+
+test('loadConfig rejects openai_api_base host not in allowlist', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      openai_api_base: 'https://gateway.example.com/v1',
+      openai_api_base_allowlist: 'api.openai.com'
+    }),
+    /host is not in allowlist/
+  );
 });
