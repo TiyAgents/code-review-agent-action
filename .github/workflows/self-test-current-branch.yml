@@ -1,0 +1,44 @@
+name: Self Test Current Branch Action
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Current Branch
+        uses: actions/checkout@v4
+
+      - name: Skip (OPENAI_API_KEY Not Configured)
+        if: ${{ secrets.OPENAI_API_KEY == '' }}
+        run: echo "OPENAI_API_KEY is not set. Skip self-test run."
+
+      - name: Run Action From Current Branch
+        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        uses: ./
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          openai_api_base: ${{ vars.OPENAI_API_BASE }}
+          include: |
+            **/*.js
+            **/*.ts
+            **/*.md
+          exclude: |
+            **/node_modules/**
+            **/dist/**
+          review_language: English
+          max_rounds: 2
+          max_model_calls: 8
+          max_files_per_batch: 6
+          max_context_chars: 64000
+          max_findings: 30
+          max_inline_comments: 10
