@@ -39,6 +39,20 @@ function parseFloatRangeInput(name, defaultValue, min, max) {
   return parsed;
 }
 
+function uniqueLowercase(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items || []) {
+    const normalized = String(item || '').trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
 function loadConfig() {
   const githubToken = core.getInput('github_token', { required: true });
   const openaiApiKey = core.getInput('openai_api_key') || process.env.OPENAI_API_KEY;
@@ -53,7 +67,7 @@ function loadConfig() {
 
   const reviewDimensions = splitListInput(core.getInput('review_dimensions') || 'general,security,performance,testing');
   const normalizedDimensions = reviewDimensions.length
-    ? reviewDimensions.map((d) => d.toLowerCase())
+    ? uniqueLowercase(reviewDimensions)
     : ['general', 'security', 'performance', 'testing'];
   const reviewLanguage = core.getInput('review_language') || 'English';
 
