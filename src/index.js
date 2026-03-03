@@ -19,6 +19,7 @@ const {
 } = require('./aggregate');
 const { loadProjectGuidance } = require('./repo-guidance');
 const { upsertSummaryComment, createReview } = require('./publish');
+const { sanitizePublicErrorDetail } = require('./public-error');
 
 function getTextBundle(language) {
   const lang = String(language || 'English').trim().toLowerCase();
@@ -41,6 +42,13 @@ function getTextBundle(language) {
       uncoveredList: 'Uncovered list',
       noPatchCoveredList: 'No-patch covered list',
       runtimeBudget: 'Runtime/Budget',
+      runtimeRounds: 'Rounds used',
+      runtimePlannerCalls: 'Planner calls',
+      runtimeReviewerCalls: 'Reviewer calls',
+      runtimeModelCalls: 'Model calls',
+      runtimePlannedBatches: 'Planned batches',
+      runtimeExecutedBatches: 'Executed batches',
+      runtimeSubAgentRuns: 'Sub-agent runs',
       noMajorIssues: 'No major issues identified from the reviewed diff.',
       noFileNotes: 'No file-level notes.',
       moreFileEntries: (count) => `- ... and ${count} more file-level entries.`,
@@ -52,6 +60,7 @@ function getTextBundle(language) {
       none: '- None',
       yes: 'YES',
       no: 'NO',
+      fromSubAgent: (name) => `From SubAgent: ${name}`,
       reasons: 'Reasons',
       structuredDegrade: 'Structured-output summary-only degradation',
       syntheticInline: 'Automated review completed for this PR diff. No concrete inline issue was selected after aggregation.',
@@ -82,21 +91,29 @@ function getTextBundle(language) {
     coverageStatus: '覆盖状态',
     uncoveredList: '未覆盖文件清单',
     noPatchCoveredList: '无 patch 文件覆盖清单',
-    runtimeBudget: '轮次与预算',
-    noMajorIssues: '在已审查 diff 中未发现主要问题。',
+      runtimeBudget: '轮次与预算',
+      runtimeRounds: '轮次',
+      runtimePlannerCalls: 'Planner 调用',
+      runtimeReviewerCalls: 'SubAgent 调用',
+      runtimeModelCalls: '模型调用',
+      runtimePlannedBatches: '计划批次',
+      runtimeExecutedBatches: '执行批次',
+      runtimeSubAgentRuns: 'SubAgent 执行次数',
+      noMajorIssues: '在已审查 diff 中未发现主要问题。',
     noFileNotes: '无文件级备注。',
     moreFileEntries: (count) => `- 其余 ${count} 条文件级记录已省略。`,
     noBlockingOverall: '在本次已审查 diff 中未发现阻塞性问题，合并前建议继续做针对性回归测试。',
     detectedOverall: (count) => `共发现 ${count} 条可执行问题，建议优先处理 CRITICAL/HIGH。`,
     defaultActionable: '- 优先修复高严重级别问题，并为变更逻辑补充针对性测试。',
     defaultRisks: '- 当前 diff 上下文之外仍可能存在边界条件风险。',
-    defaultTests: '- 建议补充正常路径、边界条件与失败路径测试。',
-    none: '- 无',
-    yes: '是',
-    no: '否',
-    reasons: '原因',
-    structuredDegrade: '结构化输出降级为仅汇总评论',
-    syntheticInline: '自动审查已完成；聚合后没有可稳定定位的具体 inline 问题。',
+      defaultTests: '- 建议补充正常路径、边界条件与失败路径测试。',
+      none: '- 无',
+      yes: '是',
+      no: '否',
+      fromSubAgent: (name) => `来自 SubAgent：${name}`,
+      reasons: '原因',
+      structuredDegrade: '结构化输出降级为仅汇总评论',
+      syntheticInline: '自动审查已完成；聚合后没有可稳定定位的具体 inline 问题。',
     reviewCompleted: '自动化 PR 审查已完成。',
     reviewSeeSummary: '详细结论请查看汇总评论。',
     lowRiskDefault: '该文件 patch 不可用（可能为二进制/超大 diff/重命名），已按文件级风险处理。',
@@ -123,6 +140,10 @@ function chunk(items, chunkSize) {
     out.push(items.slice(i, i + chunkSize));
   }
   return out;
+}
+
+function addPublicDegradedReason(reasons, code, detail) {
+  reasons.push(`${code}: ${sanitizePublicErrorDetail(detail)}`);
 }
 
 function sanitizePlannedBatches(batches, pendingPathSet, maxFilesPerBatch) {
@@ -159,6 +180,7 @@ function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
 
 function buildInlineBody(finding, text) {
   const lines = [];
+  const subAgent = String(finding.category || 'general').trim().toLowerCase() || 'general';
   lines.push(`**[${finding.severity.toUpperCase()}] ${finding.title}**`);
   lines.push(finding.summary);
 
@@ -169,6 +191,8 @@ function buildInlineBody(finding, text) {
   if (finding.risk) {
     lines.push(`${text.riskLabel}: ${finding.risk}`);
   }
+
+  lines.push(`_${text.fromSubAgent(subAgent)}_`);
 
   return lines.join('\n\n');
 }
@@ -306,8 +330,13 @@ function formatSummaryMarkdown({
     noPatchLines,
     '',
     `### ${text.runtimeBudget}`,
-    `- Rounds used: ${runtime.roundsUsed}/${runtime.maxRounds}`,
-    `- Model calls: ${runtime.modelCalls}/${runtime.maxModelCalls}`,
+    `- ${text.runtimeRounds}: ${runtime.roundsUsed}/${runtime.maxRounds}`,
+    `- ${text.runtimePlannedBatches}: ${runtime.plannedBatches}`,
+    `- ${text.runtimeExecutedBatches}: ${runtime.executedBatches}`,
+    `- ${text.runtimeSubAgentRuns}: ${runtime.subAgentRuns}`,
+    `- ${text.runtimePlannerCalls}: ${runtime.plannerCalls}`,
+    `- ${text.runtimeReviewerCalls}: ${runtime.reviewerCalls}`,
+    `- ${text.runtimeModelCalls}: ${runtime.modelCalls}/${runtime.maxModelCalls}`,
     `- ${text.structuredDegrade}: ${degradedText}`
   ].join('\n');
 }
@@ -401,6 +430,11 @@ async function runAction() {
   let modelCalls = 0;
   let roundsUsed = 0;
   let plannerStoppedEarly = false;
+  let plannerCalls = 0;
+  let reviewerCalls = 0;
+  let plannedBatchCount = 0;
+  let executedBatchCount = 0;
+  let subAgentRuns = 0;
 
   if (patchFiles.length > 0) {
     configureOpenAIClient({
@@ -456,12 +490,17 @@ async function runAction() {
         maxTurns: 8
       });
       modelCalls += plannerResult.calls;
+      plannerCalls += plannerResult.calls;
 
       let plannedBatches = [];
       let plannerRequestedStop = false;
       if (!plannerResult.ok) {
         degradedSummaryOnly = true;
-        degradedReasons.push(`planner_structured_output_failed_round_${round}: ${plannerResult.error.message}`);
+        addPublicDegradedReason(
+          degradedReasons,
+          `planner_structured_output_failed_round_${round}`,
+          plannerResult.error && (plannerResult.error.message || String(plannerResult.error))
+        );
         core.warning(`Round ${round}: planner failed structured output. ${plannerResult.error.message}`);
       } else {
         plannedBatches = sanitizePlannedBatches(
@@ -495,6 +534,7 @@ async function runAction() {
         plannedBatches = fallbackBatches;
         core.warning(`Round ${round}: planner returned no valid batches, using fallback chunking (${plannedBatches.length} batches).`);
       }
+      plannedBatchCount += plannedBatches.length;
 
       const pendingFileByPath = new Map(pendingPatchFiles.map((file) => [file.filename, file]));
       const remainingCallBudget = config.maxModelCalls - modelCalls;
@@ -534,6 +574,7 @@ async function runAction() {
           core.warning(`Round ${round} Batch ${batchIndex + 1}: no resolvable files after mapping, skipped.`);
           continue;
         }
+        executedBatchCount += 1;
         core.info(
           `Round ${round} Batch ${batchIndex + 1}/${plannedBatches.length}: focus=${batch.focus} files=${batchFiles.length}`
         );
@@ -591,12 +632,16 @@ async function runAction() {
             maxTurns: 10
           });
           modelCalls += reviewResult.calls;
+          reviewerCalls += reviewResult.calls;
+          subAgentRuns += 1;
           const elapsedMs = Date.now() - agentStart;
 
           if (!reviewResult.ok) {
             degradedSummaryOnly = true;
-            degradedReasons.push(
-              `reviewer_structured_output_failed_round_${round}_${dimension}: ${reviewResult.error.message}`
+            addPublicDegradedReason(
+              degradedReasons,
+              `reviewer_structured_output_failed_round_${round}_${dimension}`,
+              reviewResult.error && (reviewResult.error.message || String(reviewResult.error))
             );
             core.warning(
               `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewResult.error.message}`
@@ -847,6 +892,11 @@ async function runAction() {
     runtime: {
       roundsUsed,
       maxRounds: config.maxRounds,
+      plannedBatches: plannedBatchCount,
+      executedBatches: executedBatchCount,
+      subAgentRuns,
+      plannerCalls,
+      reviewerCalls,
       modelCalls,
       maxModelCalls: config.maxModelCalls
     },
@@ -894,7 +944,11 @@ async function runAction() {
     );
 
     if (reviewResult.downgradedInline) {
-      degradedReasons.push(reviewResult.reason || 'inline_rejected_by_github_api');
+      addPublicDegradedReason(
+        degradedReasons,
+        'inline_rejected_by_github_api',
+        reviewResult.reason || 'inline_rejected_by_github_api'
+      );
     }
   } else {
     core.warning('Structured output degradation active: skipped PR review creation and posted summary only.');
