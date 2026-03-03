@@ -1,4 +1,4 @@
-name: PR Review Agent
+name: Inline PR Review Agent
 
 description: PR code review action using OpenAI Agents SDK with inline comments and summary updates.
 
