@@ -13,20 +13,22 @@ permissions:
 jobs:
   self-test:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
 
       - name: Skip (OPENAI_API_KEY Not Configured)
-        if: ${{ secrets.OPENAI_API_KEY == '' }}
+        if: ${{ env.OPENAI_API_KEY == '' }}
         run: echo "OPENAI_API_KEY is not set. Skip self-test run."
 
       - name: Run Action From Current Branch
-        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        if: ${{ env.OPENAI_API_KEY != '' }}
         uses: ./
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          openai_api_key: ${{ env.OPENAI_API_KEY }}
           openai_api_base: ${{ vars.OPENAI_API_BASE }}
           # [可选] Planner 使用模型；默认 gpt-5.3-codex
           # 可选值：任意可用模型名（字符串）
