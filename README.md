@@ -11,6 +11,16 @@ This action:
   - one updatable summary issue comment (marker-based, no spam).
 - Tracks coverage and budget limits; outputs uncovered files + reasons when budget is exhausted.
 
+## Agent Architecture
+
+![Agent Architecture](docs/images/agent-architecture-cute-variant-b-16x9.png)
+
+Simple flow explanation:
+- `Planner` decides each round's batches under `max_rounds`, `max_model_calls`, and `max_files_per_batch`.
+- `SubAgent(general)` always runs first for each batch, and can dynamically request extra dimensions (`security/performance/testing`).
+- All sub-agent outputs are aggregated, normalized, deduplicated, then mapped to inline-commentable diff lines.
+- The publisher writes one review + one updatable summary, with historical dedupe and best-effort outdated comment minimization.
+
 ## Features
 
 - Full coverage target over filtered file set, including no-patch/binary files as file-level review entries.
