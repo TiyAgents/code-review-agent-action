@@ -140,6 +140,19 @@ function sanitizePlannedBatches(batches, pendingPathSet, maxFilesPerBatch) {
   return out;
 }
 
+function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
+  if (!batches.length) {
+    return 'none';
+  }
+
+  return batches.slice(0, maxEntries).map((batch, index) => {
+    const previewPaths = batch.filePaths.slice(0, 3).join(', ');
+    const extra = batch.filePaths.length > 3 ? ` +${batch.filePaths.length - 3} more` : '';
+    const reason = batch.reason ? ` reason=${batch.reason}` : '';
+    return `#${index + 1} focus=${batch.focus} files=${batch.filePaths.length}${reason} paths=[${previewPaths}${extra}]`;
+  }).join(' | ');
+}
+
 function buildInlineBody(finding, text) {
   const lines = [];
   lines.push(`**[${finding.severity.toUpperCase()}] ${finding.title}**`);
@@ -445,6 +458,7 @@ async function runAction() {
       if (!plannerResult.ok) {
         degradedSummaryOnly = true;
         degradedReasons.push(`planner_structured_output_failed_round_${round}: ${plannerResult.error.message}`);
+        core.warning(`Round ${round}: planner failed structured output. ${plannerResult.error.message}`);
       } else {
         plannedBatches = sanitizePlannedBatches(
           plannerResult.output.batches,
@@ -452,6 +466,14 @@ async function runAction() {
           config.maxFilesPerBatch
         );
         plannerRequestedStop = Boolean(plannerResult.output.done);
+        const plannerNotes = String(plannerResult.output.notes || '').trim();
+        core.info(
+          `Round ${round}: planner done=${plannerRequestedStop} calls_used=${plannerResult.calls} batches=${plannedBatches.length}`
+        );
+        if (plannerNotes) {
+          core.info(`Round ${round}: planner notes=${plannerNotes}`);
+        }
+        core.info(`Round ${round}: planner batch plan => ${summarizePlannerBatchesForLog(plannedBatches)}`);
       }
 
       if (plannerRequestedStop && plannedBatches.length === 0) {
@@ -467,6 +489,7 @@ async function runAction() {
           filePaths: batchFiles.map((f) => f.filename)
         }));
         plannedBatches = fallbackBatches;
+        core.warning(`Round ${round}: planner returned no valid batches, using fallback chunking (${plannedBatches.length} batches).`);
       }
 
       const pendingFileByPath = new Map(pendingPatchFiles.map((file) => [file.filename, file]));
@@ -489,10 +512,12 @@ async function runAction() {
           `Round ${round}: using coverage-first mode with primary dimension "${roundDimensions[0]}".`
         );
       }
+      core.info(`Round ${round}: scheduled dimensions=${roundDimensions.join(', ')}`);
 
       let roundProgress = false;
 
-      for (const batch of plannedBatches) {
+      for (let batchIndex = 0; batchIndex < plannedBatches.length; batchIndex += 1) {
+        const batch = plannedBatches[batchIndex];
         if (modelCalls >= config.maxModelCalls) {
           break;
         }
@@ -502,8 +527,12 @@ async function runAction() {
           .filter(Boolean);
 
         if (batchFiles.length === 0) {
+          core.warning(`Round ${round} Batch ${batchIndex + 1}: no resolvable files after mapping, skipped.`);
           continue;
         }
+        core.info(
+          `Round ${round} Batch ${batchIndex + 1}/${plannedBatches.length}: focus=${batch.focus} files=${batchFiles.length}`
+        );
 
         const batchResultByDimension = [];
         let batchSuccessful = false;
@@ -529,23 +558,40 @@ async function runAction() {
           });
 
           if (reviewInput.selectedPaths.length === 0) {
+            core.warning(
+              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}): selectedPaths=0 due to context budget, skipped.`
+            );
             continue;
           }
 
+          const agentStart = Date.now();
+          core.info(
+            `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) start: files=${reviewInput.selectedPaths.length}`
+          );
           const reviewResult = await runStructuredWithRepair(agent, reviewInput.prompt, {
             allowRepair: true,
             maxTurns: 10
           });
           modelCalls += reviewResult.calls;
+          const elapsedMs = Date.now() - agentStart;
 
           if (!reviewResult.ok) {
             degradedSummaryOnly = true;
             degradedReasons.push(
               `reviewer_structured_output_failed_round_${round}_${dimension}: ${reviewResult.error.message}`
             );
+            core.warning(
+              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewResult.error.message}`
+            );
             continue;
           }
 
+          const findingCount = (reviewResult.output.findings || []).length;
+          const fileConclusionCount = (reviewResult.output.fileConclusions || []).length;
+          const suggestionCount = (reviewResult.output.actionableSuggestions || []).length;
+          core.info(
+            `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) done: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} findings=${findingCount} file_conclusions=${fileConclusionCount} suggestions=${suggestionCount}`
+          );
           batchSuccessful = true;
           batchResultByDimension.push({
             dimension,
@@ -555,6 +601,7 @@ async function runAction() {
         }
 
         if (!batchSuccessful) {
+          core.warning(`Round ${round} Batch ${batchIndex + 1}: no successful sub-agent outputs.`);
           continue;
         }
 
@@ -599,6 +646,10 @@ async function runAction() {
             }
           }
         }
+
+        core.info(
+          `Round ${round} Batch ${batchIndex + 1}: merged_dimensions=${batchResultByDimension.length} total_model_calls=${modelCalls}/${config.maxModelCalls}`
+        );
       }
 
       if (plannerRequestedStop) {
