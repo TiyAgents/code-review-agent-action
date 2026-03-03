@@ -92,29 +92,29 @@ function getTextBundle(language) {
     coverageStatus: '覆盖状态',
     uncoveredList: '未覆盖文件清单',
     noPatchCoveredList: '无 patch 文件覆盖清单',
-      runtimeBudget: '轮次与预算',
-      runtimeRounds: '轮次',
-      runtimePlannerCalls: 'Planner 调用',
-      runtimeReviewerCalls: 'SubAgent 调用',
-      runtimeModelCalls: '模型调用',
-      runtimePlannedBatches: '计划批次',
-      runtimeExecutedBatches: '执行批次',
-      runtimeSubAgentRuns: 'SubAgent 执行次数',
-      noMajorIssues: '在已审查 diff 中未发现主要问题。',
+    runtimeBudget: '轮次与预算',
+    runtimeRounds: '轮次',
+    runtimePlannerCalls: 'Planner 调用',
+    runtimeReviewerCalls: 'SubAgent 调用',
+    runtimeModelCalls: '模型调用',
+    runtimePlannedBatches: '计划批次',
+    runtimeExecutedBatches: '执行批次',
+    runtimeSubAgentRuns: 'SubAgent 执行次数',
+    noMajorIssues: '在已审查 diff 中未发现主要问题。',
     noFileNotes: '无文件级备注。',
     moreFileEntries: (count) => `- 其余 ${count} 条文件级记录已省略。`,
     noBlockingOverall: '在本次已审查 diff 中未发现阻塞性问题，合并前建议继续做针对性回归测试。',
     detectedOverall: (count) => `共发现 ${count} 条可执行问题，建议优先处理 CRITICAL/HIGH。`,
     defaultActionable: '- 优先修复高严重级别问题，并为变更逻辑补充针对性测试。',
     defaultRisks: '- 当前 diff 上下文之外仍可能存在边界条件风险。',
-      defaultTests: '- 建议补充正常路径、边界条件与失败路径测试。',
-      none: '- 无',
-      yes: '是',
-      no: '否',
-      fromSubAgentTag: (name) => `[来自 SubAgent：${name}]`,
-      reasons: '原因',
-      structuredDegrade: '结构化输出降级为仅汇总评论',
-      syntheticInline: '自动审查已完成；聚合后没有可稳定定位的具体 inline 问题。',
+    defaultTests: '- 建议补充正常路径、边界条件与失败路径测试。',
+    none: '- 无',
+    yes: '是',
+    no: '否',
+    fromSubAgentTag: (name) => `[来自 SubAgent：${name}]`,
+    reasons: '原因',
+    structuredDegrade: '结构化输出降级为仅汇总评论',
+    syntheticInline: '自动审查已完成；聚合后没有可稳定定位的具体 inline 问题。',
     reviewCompleted: '自动化 PR 审查已完成。',
     reviewSeeSummary: '详细结论请查看汇总评论。',
     lowRiskDefault: '该文件 patch 不可用（可能为二进制/超大 diff/重命名），已按文件级风险处理。',
@@ -149,6 +149,10 @@ function addPublicDegradedReason(reasons, code, detail) {
 
 function getErrorMessage(error, fallback = 'unknown_error') {
   return String(error?.message || error || fallback);
+}
+
+function shouldUseSummaryOnlyMode({ hadStructuredOutputFailure, hasSuccessfulReviewerOutput }) {
+  return Boolean(hadStructuredOutputFailure && !hasSuccessfulReviewerOutput);
 }
 
 function sanitizePlannedBatches(batches, pendingPathSet, maxFilesPerBatch) {
@@ -427,6 +431,8 @@ async function runAction() {
   }
 
   let degradedSummaryOnly = false;
+  let hadStructuredOutputFailure = false;
+  let hasSuccessfulReviewerOutput = false;
   const degradedReasons = [];
 
   const rawFindings = [];
@@ -503,7 +509,7 @@ async function runAction() {
       let plannerRequestedStop = false;
       if (!plannerResult.ok) {
         const plannerErrorMessage = getErrorMessage(plannerResult.error);
-        degradedSummaryOnly = true;
+        hadStructuredOutputFailure = true;
         addPublicDegradedReason(
           degradedReasons,
           `planner_structured_output_failed_round_${round}`,
@@ -646,7 +652,7 @@ async function runAction() {
 
           if (!reviewResult.ok) {
             const reviewerErrorMessage = getErrorMessage(reviewResult.error);
-            degradedSummaryOnly = true;
+            hadStructuredOutputFailure = true;
             addPublicDegradedReason(
               degradedReasons,
               `reviewer_structured_output_failed_round_${round}_${dimension}`,
@@ -657,6 +663,7 @@ async function runAction() {
             );
             continue;
           }
+          hasSuccessfulReviewerOutput = true;
 
           const findingCount = (reviewResult.output.findings || []).length;
           const fileConclusionCount = (reviewResult.output.fileConclusions || []).length;
@@ -759,6 +766,11 @@ async function runAction() {
       }
     }
   }
+
+  degradedSummaryOnly = shouldUseSummaryOnlyMode({
+    hadStructuredOutputFailure,
+    hasSuccessfulReviewerOutput
+  });
 
   const normalizedFindings = dedupeAndSortFindings(
     normalizeFindings(rawFindings, targetPaths, {
@@ -996,6 +1008,27 @@ async function runAction() {
   }
 }
 
-runAction().catch((error) => {
-  core.setFailed(error.message || String(error));
-});
+if (require.main === module) {
+  runAction().catch((error) => {
+    core.setFailed(error.message || String(error));
+  });
+}
+
+module.exports = {
+  runAction,
+  __internal: {
+    getTextBundle,
+    uniqueItems,
+    normalizeDimensionNames,
+    chunk,
+    addPublicDegradedReason,
+    getErrorMessage,
+    shouldUseSummaryOnlyMode,
+    sanitizePlannedBatches,
+    summarizePlannerBatchesForLog,
+    buildInlineBody,
+    summarizeSeverity,
+    summarizeFileConclusions,
+    formatSummaryMarkdown
+  }
+};

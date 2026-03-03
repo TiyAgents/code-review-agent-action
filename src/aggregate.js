@@ -240,8 +240,12 @@ function groupFindingsBySeverity(findings) {
     low: []
   };
 
-  for (const finding of findings) {
-    groups[finding.severity].push(finding);
+  for (const finding of findings || []) {
+    if (!finding || typeof finding !== 'object') {
+      continue;
+    }
+    const severity = SEVERITY_RANK[finding.severity] ? finding.severity : 'medium';
+    groups[severity].push(finding);
   }
 
   return groups;

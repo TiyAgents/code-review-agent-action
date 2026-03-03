@@ -64,3 +64,17 @@ test('sanitizePublicErrorDetail handles non-string input without throwing', () =
   assert.equal(typeof out, 'string');
   assert.ok(out.length > 0);
 });
+
+test('sanitizePublicErrorDetail redacts additional cloud/provider token formats', () => {
+  const input = [
+    'aws key AKIA1234567890ABCDEF',
+    'google key AIza12345678901234567890123456789012345',
+    'slack token xoxb-1234567890-abcdef-0987654321'
+  ].join(' ; ');
+
+  const out = sanitizePublicErrorDetail(input);
+  assert.doesNotMatch(out, /AKIA1234567890ABCDEF/);
+  assert.doesNotMatch(out, /AIza12345678901234567890123456789012345/);
+  assert.doesNotMatch(out, /xoxb-1234567890-abcdef-0987654321/);
+  assert.match(out, /<redacted-token>/);
+});
