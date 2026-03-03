@@ -119,7 +119,11 @@ Use this language for all natural-language output fields: ${language || 'English
 ${guidanceBlock}
 Rules:
 - Review ONLY the provided file list and diff snippets.
+- Diff snippets are line-anchored as [L<old>|R<new>] <raw diff line>.
 - Use path/side/line when you can map issue to diff lines; otherwise side=FILE and line=null.
+- For additions/context on new code, use side=RIGHT with the R<number> anchor.
+- For removals on old code, use side=LEFT with the L<number> anchor.
+- Never emit line numbers that do not appear in the provided anchors.
 - Do not invent files or line numbers.
 - Severity must be one of critical/high/medium/low.
 - Set confidence in [0,1]. Include at least one concrete evidence item tied to provided diff context.
@@ -205,6 +209,69 @@ function buildPlannerInput({ round, maxRounds, budgetRemaining, maxFilesPerBatch
   ].join('\n');
 }
 
+function formatPatchWithAnchors(patch) {
+  if (typeof patch !== 'string' || patch.length === 0) {
+    return '';
+  }
+
+  const lines = patch.split('\n');
+  const output = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine || '';
+
+    if (line.startsWith('@@')) {
+      const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
+      if (match) {
+        oldLine = Number.parseInt(match[1], 10);
+        newLine = Number.parseInt(match[2], 10);
+        inHunk = true;
+      } else {
+        inHunk = false;
+      }
+      output.push(line);
+      continue;
+    }
+
+    if (!inHunk) {
+      continue;
+    }
+
+    if (line.startsWith('+')) {
+      output.push(`[L-|R${newLine}] ${line}`);
+      newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith('-')) {
+      output.push(`[L${oldLine}|R-] ${line}`);
+      oldLine += 1;
+      continue;
+    }
+
+    if (line.startsWith(' ')) {
+      output.push(`[L${oldLine}|R${newLine}] ${line}`);
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith('\\')) {
+      output.push(`[L-|R-] ${line}`);
+      continue;
+    }
+  }
+
+  if (output.length === 0) {
+    return patch;
+  }
+
+  return output.join('\n');
+}
+
 function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, availableDimensions }) {
   let usedChars = 0;
   const sections = [];
@@ -220,13 +287,13 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, 
       `deletions=${file.deletions}`
     ].join('\n');
 
-    let patch = file.patch || '';
+    let patch = formatPatchWithAnchors(file.patch);
     if (!patch) {
       patch = '[patch unavailable]';
     }
 
     const staticSection = `\n### ${file.filename}\n${header}\n\n`;
-    const patchIntro = '```diff\n';
+    const patchIntro = '```text\n';
     const patchOutro = '\n```\n';
 
     const fixedCost = staticSection.length + patchIntro.length + patchOutro.length;
@@ -264,6 +331,7 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, 
     `dimension=${dimension}`,
     `round=${round}`,
     `availableDimensions=${(availableDimensions || []).join(',')}`,
+    'Anchor format: [L<old>|R<new>] <raw diff line>; use RIGHT+R<number> or LEFT+L<number>.',
     'Review the following batch and return schema output.',
     ...sections
   ].join('\n');

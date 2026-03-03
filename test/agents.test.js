@@ -148,3 +148,66 @@ test('buildBatchReviewInput skips files when budget cannot fit any section body'
 
   assert.deepEqual(result.selectedPaths, []);
 });
+
+test('buildBatchReviewInput includes absolute line anchors in prompt', () => {
+  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+
+  const result = buildBatchReviewInput({
+    dimension: 'general',
+    round: 2,
+    maxContextChars: 4000,
+    availableDimensions: ['general', 'security'],
+    batchFiles: [
+      {
+        filename: 'src/sample.js',
+        status: 'modified',
+        changes: 4,
+        additions: 2,
+        deletions: 2,
+        patch: [
+          '@@ -10,3 +10,3 @@',
+          ' const a = 1;',
+          '-const b = 2;',
+          '+const b = 3;',
+          ' const c = 4;'
+        ].join('\n')
+      }
+    ]
+  });
+
+  assert.match(result.prompt, /Anchor format: \[L<old>\|R<new>\]/);
+  assert.match(result.prompt, /\[L10\|R10\]  const a = 1;/);
+  assert.match(result.prompt, /\[L11\|R-\] -const b = 2;/);
+  assert.match(result.prompt, /\[L-\|R11\] \+const b = 3;/);
+});
+
+test('buildBatchReviewInput preserves line anchors for code starting with +++ and ---', () => {
+  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+
+  const result = buildBatchReviewInput({
+    dimension: 'general',
+    round: 1,
+    maxContextChars: 4000,
+    availableDimensions: ['general'],
+    batchFiles: [
+      {
+        filename: 'src/weird.js',
+        status: 'modified',
+        changes: 4,
+        additions: 1,
+        deletions: 1,
+        patch: [
+          '@@ -1,3 +1,3 @@',
+          ' const x = 1;',
+          '+++guard_added',
+          '---legacy_removed',
+          ' const y = 2;'
+        ].join('\n')
+      }
+    ]
+  });
+
+  assert.match(result.prompt, /\[L-\|R2\] \+\+\+guard_added/);
+  assert.match(result.prompt, /\[L2\|R-\] ---legacy_removed/);
+  assert.match(result.prompt, /\[L3\|R3\]  const y = 2;/);
+});
