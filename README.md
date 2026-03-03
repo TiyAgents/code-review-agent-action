@@ -17,6 +17,9 @@ This action:
 - Structured schema output validation with one repair retry.
 - Degradation mode: if structured output still fails after repair, posts summary-only with explicit reason.
 - Duplicate suppression for same `head_sha` + same digest.
+- Two-stage historical inline lifecycle control:
+  - Stage 1: dedupe by `path + side + line + issue-key` across runs.
+  - Stage 2: auto-minimize outdated historical inline comments (GraphQL best-effort).
 - Confidence/evidence gating and semantic deduplication to reduce repeated/low-quality findings.
 - Configurable review language via `review_language` (default `English`).
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
@@ -63,6 +66,7 @@ jobs:
           review_language: English
           min_finding_confidence: 0.72
           coverage_first_round_primary_only: true
+          auto_minimize_outdated_comments: true
           max_rounds: 8
           max_model_calls: 128 # example override (default: 40)
           max_files_per_batch: 8
@@ -86,6 +90,7 @@ jobs:
 | `review_language` | no | `English` | Preferred language for review comments and summary |
 | `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |
 | `coverage_first_round_primary_only` | no | `true` | Round 1 runs only primary dimension for faster file coverage |
+| `auto_minimize_outdated_comments` | no | `true` | Best-effort GraphQL minimize for outdated historical inline comments from this action |
 | `max_rounds` | no | `8` | Max planning/review rounds |
 | `max_model_calls` | no | `40` | Hard cap for model calls |
 | `max_files_per_batch` | no | `8` | Batch size cap |
@@ -144,4 +149,5 @@ Practical guidance:
 
 - Trigger support: this action expects `pull_request` event payload.
 - Inline comments use `path` + `side` + `line`, with fallback to summary-only file-level entries when mapping is invalid.
+- Inline comments include a stable hidden issue key marker for cross-run dedupe and stale-thread minimization.
 - Summary comment update uses marker metadata and deduplicates by `head_sha` + digest.

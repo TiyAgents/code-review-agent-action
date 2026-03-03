@@ -83,6 +83,7 @@ function loadConfig() {
     reviewLanguage,
     minFindingConfidence: parseFloatRangeInput('min_finding_confidence', 0.72, 0, 1),
     coverageFirstRoundPrimaryOnly: parseBooleanInput('coverage_first_round_primary_only', true),
+    autoMinimizeOutdatedComments: parseBooleanInput('auto_minimize_outdated_comments', true),
     maxRounds: parsePositiveIntInput('max_rounds', 8),
     maxModelCalls: parsePositiveIntInput('max_model_calls', 40),
     maxFilesPerBatch: parsePositiveIntInput('max_files_per_batch', 8),

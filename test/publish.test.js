@@ -174,3 +174,220 @@ test('createReview downgrades inline comments when GitHub rejects inline locatio
   assert.equal(createCalls.length, 2);
   assert.match(createCalls[1].body, /Inline comments were downgraded/);
 });
+
+test('createReview filters historical duplicate inline comments by location and issue key', async () => {
+  const createCalls = [];
+  const octokit = {
+    paginate: async (method) => {
+      if (method === octokit.rest.pulls.listReviews) {
+        return [];
+      }
+      if (method === octokit.rest.pulls.listReviewComments) {
+        return [
+          {
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 10,
+            body: [
+              '**[MEDIUM] Duplicate issue**',
+              'summary',
+              '<!-- ai-code-review-agent:inline-key duplicate_issue -->'
+            ].join('\n\n')
+          }
+        ];
+      }
+      return [];
+    },
+    rest: {
+      pulls: {
+        listReviews: () => {
+        },
+        listReviewComments: () => {
+        },
+        createReview: async (payload) => {
+          createCalls.push(payload);
+          return { data: { id: 1 } };
+        }
+      }
+    }
+  };
+
+  const result = await createReview(octokit, {
+    owner: 'o',
+    repo: 'r',
+    pullNumber: 1,
+    reviewMarker: 'ai-code-review-agent:review',
+    headSha: 'sha3',
+    digest: 'd2',
+    reviewBody: 'review body',
+    inlineComments: [
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 10,
+        body: '**[MEDIUM] Duplicate issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key duplicate_issue -->'
+      },
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 12,
+        body: '**[MEDIUM] New issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key new_issue -->'
+      }
+    ]
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.downgradedInline, false);
+  assert.equal(result.inlineCount, 1);
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].comments.length, 1);
+  assert.equal(createCalls[0].comments[0].line, 12);
+});
+
+test('createReview does not suppress duplicates from minimized historical comments', async () => {
+  const createCalls = [];
+  const octokit = {
+    paginate: async (method) => {
+      if (method === octokit.rest.pulls.listReviews) {
+        return [];
+      }
+      if (method === octokit.rest.pulls.listReviewComments) {
+        return [
+          {
+            node_id: 'PRRC_dup_minimized',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 10,
+            body: [
+              '**[MEDIUM] Duplicate issue**',
+              'summary',
+              '<!-- ai-code-review-agent:inline-key duplicate_issue -->'
+            ].join('\n\n')
+          }
+        ];
+      }
+      return [];
+    },
+    graphql: async (_query, variables) => {
+      if (Array.isArray(variables.ids)) {
+        return {
+          nodes: [{ id: 'PRRC_dup_minimized', isMinimized: true }]
+        };
+      }
+      return {};
+    },
+    rest: {
+      pulls: {
+        listReviews: () => {
+        },
+        listReviewComments: () => {
+        },
+        createReview: async (payload) => {
+          createCalls.push(payload);
+          return { data: { id: 1 } };
+        }
+      }
+    }
+  };
+
+  const result = await createReview(octokit, {
+    owner: 'o',
+    repo: 'r',
+    pullNumber: 1,
+    reviewMarker: 'ai-code-review-agent:review',
+    headSha: 'sha3a',
+    digest: 'd2a',
+    reviewBody: 'review body',
+    inlineComments: [
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 10,
+        body: '**[MEDIUM] Duplicate issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key duplicate_issue -->'
+      }
+    ]
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.inlineCount, 1);
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].comments.length, 1);
+});
+
+test('createReview minimizes outdated historical inline comments posted by this action', async () => {
+  const minimizedSubjectIds = [];
+  let hydrateCalls = 0;
+  const octokit = {
+    paginate: async (method) => {
+      if (method === octokit.rest.pulls.listReviews) {
+        return [];
+      }
+      if (method === octokit.rest.pulls.listReviewComments) {
+        return [
+          {
+            node_id: 'PRRC_dup',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 10,
+            body: '**[MEDIUM] Duplicate**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key dup -->'
+          },
+          {
+            node_id: 'PRRC_old',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 8,
+            body: '**[LOW] Old issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key old_issue -->'
+          }
+        ];
+      }
+      return [];
+    },
+    graphql: async (_query, variables) => {
+      if (Array.isArray(variables.ids)) {
+        hydrateCalls += 1;
+        return {
+          nodes: [
+            { id: 'PRRC_dup', isMinimized: false },
+            { id: 'PRRC_old', isMinimized: false }
+          ]
+        };
+      }
+      minimizedSubjectIds.push(variables.subjectId);
+      return {};
+    },
+    rest: {
+      pulls: {
+        listReviews: () => {
+        },
+        listReviewComments: () => {
+        },
+        createReview: async () => ({ data: { id: 1 } })
+      }
+    }
+  };
+
+  const result = await createReview(octokit, {
+    owner: 'o',
+    repo: 'r',
+    pullNumber: 1,
+    reviewMarker: 'ai-code-review-agent:review',
+    headSha: 'sha4',
+    digest: 'd4',
+    reviewBody: 'review body',
+    inlineComments: [
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 10,
+        body: '**[MEDIUM] Duplicate**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key dup -->'
+      }
+    ]
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.inlineCount, 0);
+  assert.equal(result.minimizeResult.attempted, 1);
+  assert.equal(result.minimizeResult.minimized, 1);
+  assert.equal(hydrateCalls, 1);
+  assert.deepEqual(minimizedSubjectIds, ['PRRC_old']);
+});
