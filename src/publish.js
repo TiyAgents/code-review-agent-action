@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { normalizeInlineKey } = require('./inline-key');
 
 function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -33,6 +34,177 @@ function parseMarkerMeta(marker, body) {
   } catch {
     return null;
   }
+}
+
+function hasInlineKeyMarker(body) {
+  return /<!--\s*ai-code-review-agent:inline-key\s+[a-z0-9_-]{1,120}\s*-->/i.test(String(body || ''));
+}
+
+function extractInlineIssueKey(body) {
+  const text = String(body || '');
+  const markerMatch = text.match(/<!--\s*ai-code-review-agent:inline-key\s+([a-z0-9_-]{1,120})\s*-->/i);
+  if (markerMatch) {
+    return normalizeInlineKey(markerMatch[1]);
+  }
+
+  const headingMatch = text.match(/\*\*\[[^\]]+\]\s+(.+?)\*\*/);
+  if (headingMatch) {
+    return normalizeInlineKey(headingMatch[1]);
+  }
+
+  const firstLine = text.split('\n').map((line) => line.trim()).find(Boolean) || '';
+  return normalizeInlineKey(firstLine);
+}
+
+function buildInlineCommentKey(comment) {
+  const path = String(comment.path || '').trim();
+  const side = String(comment.side || 'RIGHT').trim().toUpperCase();
+  const line = Number.parseInt(String(comment.line || comment.original_line || 0), 10) || 0;
+  const issueKey = extractInlineIssueKey(comment.body || '');
+  return `${path}|${side}|${line}|${issueKey}`;
+}
+
+async function listReviewComments(octokit, { owner, repo, pullNumber }) {
+  const comments = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
+    owner,
+    repo,
+    pull_number: pullNumber,
+    per_page: 100
+  });
+  return hydrateMinimizedStateForComments(octokit, comments);
+}
+
+function splitIntoChunks(items, chunkSize) {
+  const out = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    out.push(items.slice(i, i + chunkSize));
+  }
+  return out;
+}
+
+async function hydrateMinimizedStateForComments(octokit, comments) {
+  if (!octokit || typeof octokit.graphql !== 'function') {
+    return comments || [];
+  }
+
+  const nodeIds = [...new Set((comments || [])
+    .map((comment) => String(comment.node_id || '').trim())
+    .filter(Boolean))];
+  if (nodeIds.length === 0) {
+    return comments || [];
+  }
+
+  const minimizedByNodeId = new Map();
+  for (const ids of splitIntoChunks(nodeIds, 50)) {
+    try {
+      const result = await octokit.graphql(
+        `
+          query PullRequestReviewCommentMinimizedState($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on PullRequestReviewComment {
+                id
+                isMinimized
+              }
+            }
+          }
+        `,
+        { ids }
+      );
+
+      for (const node of result.nodes || []) {
+        if (!node || !node.id) {
+          continue;
+        }
+        minimizedByNodeId.set(node.id, Boolean(node.isMinimized));
+      }
+    } catch {
+      // Best effort: keep dedupe behavior if GraphQL query fails.
+      return comments || [];
+    }
+  }
+
+  return (comments || []).map((comment) => {
+    const nodeId = String(comment.node_id || '').trim();
+    if (!nodeId || !minimizedByNodeId.has(nodeId)) {
+      return comment;
+    }
+    return {
+      ...comment,
+      isMinimized: minimizedByNodeId.get(nodeId)
+    };
+  });
+}
+
+function filterDuplicateInlineComments(inlineComments, existingComments) {
+  const existingKeys = new Set(
+    (existingComments || [])
+      .filter((comment) => hasInlineKeyMarker(comment.body || ''))
+      .filter((comment) => comment.isMinimized !== true)
+      .map((comment) => buildInlineCommentKey(comment))
+  );
+  return (inlineComments || []).filter((comment) => !existingKeys.has(buildInlineCommentKey(comment)));
+}
+
+function buildInlineCommentKeySet(comments) {
+  return new Set((comments || []).map((comment) => buildInlineCommentKey(comment)));
+}
+
+async function minimizeOutdatedInlineComments(octokit, { existingComments, activeInlineCommentKeys }) {
+  if (!octokit || typeof octokit.graphql !== 'function') {
+    return {
+      attempted: 0,
+      minimized: 0,
+      alreadyMinimized: 0,
+      failed: 0,
+      skipped: true,
+      reason: 'graphql_unavailable'
+    };
+  }
+
+  const candidates = (existingComments || [])
+    .filter((comment) => hasInlineKeyMarker(comment.body || ''))
+    .filter((comment) => comment.isMinimized !== true)
+    .filter((comment) => comment.node_id)
+    .filter((comment) => !activeInlineCommentKeys.has(buildInlineCommentKey(comment)));
+
+  let minimized = 0;
+  let alreadyMinimized = 0;
+  let failed = 0;
+  for (const comment of candidates) {
+    try {
+      await octokit.graphql(
+        `
+          mutation MinimizeComment($subjectId: ID!) {
+            minimizeComment(input: {subjectId: $subjectId, classifier: OUTDATED}) {
+              minimizedComment {
+                isMinimized
+              }
+            }
+          }
+        `,
+        {
+          subjectId: comment.node_id
+        }
+      );
+      minimized += 1;
+    } catch (error) {
+      const message = String(error && (error.message || error));
+      if (/already minimized|is minimized/i.test(message)) {
+        alreadyMinimized += 1;
+        continue;
+      }
+      failed += 1;
+    }
+  }
+
+  return {
+    attempted: candidates.length,
+    minimized,
+    alreadyMinimized,
+    failed,
+    skipped: false,
+    reason: ''
+  };
 }
 
 async function findSummaryComment(octokit, { owner, repo, issueNumber, summaryMarker }) {
@@ -135,7 +307,8 @@ async function createReview(octokit, {
   headSha,
   digest,
   reviewBody,
-  inlineComments
+  inlineComments,
+  autoMinimizeOutdatedComments = true
 }) {
   const already = await reviewAlreadyExists(octokit, {
     owner,
@@ -152,13 +325,43 @@ async function createReview(octokit, {
       created: false,
       inlineCount: 0,
       downgradedInline: false,
-      reason: 'same_head_sha_and_digest_already_reviewed'
+      reason: 'same_head_sha_and_digest_already_reviewed',
+      minimizeResult: {
+        attempted: 0,
+        minimized: 0,
+        alreadyMinimized: 0,
+        failed: 0,
+        skipped: true,
+        reason: 'skipped_same_digest'
+      }
     };
   }
 
   const body = [markerTag(reviewMarker), markerMetaTag(reviewMarker, { headSha, digest }), reviewBody].join('\n\n');
+  let dedupedInlineComments = inlineComments || [];
+  let historicalInlineComments = [];
+  const needHistorical = dedupedInlineComments.length > 0 || autoMinimizeOutdatedComments;
+  if (needHistorical) {
+    historicalInlineComments = await listReviewComments(octokit, { owner, repo, pullNumber });
+  }
+  if (dedupedInlineComments.length > 0) {
+    dedupedInlineComments = filterDuplicateInlineComments(dedupedInlineComments, historicalInlineComments);
+  }
+  const minimizeResult = autoMinimizeOutdatedComments
+    ? await minimizeOutdatedInlineComments(octokit, {
+      existingComments: historicalInlineComments,
+      activeInlineCommentKeys: buildInlineCommentKeySet(inlineComments || [])
+    })
+    : {
+      attempted: 0,
+      minimized: 0,
+      alreadyMinimized: 0,
+      failed: 0,
+      skipped: true,
+      reason: 'disabled_by_config'
+    };
 
-  if (!inlineComments || inlineComments.length === 0) {
+  if (dedupedInlineComments.length === 0) {
     await octokit.rest.pulls.createReview({
       owner,
       repo,
@@ -172,7 +375,8 @@ async function createReview(octokit, {
       skipped: false,
       created: true,
       inlineCount: 0,
-      downgradedInline: false
+      downgradedInline: false,
+      minimizeResult
     };
   }
 
@@ -184,14 +388,15 @@ async function createReview(octokit, {
       commit_id: headSha,
       event: 'COMMENT',
       body,
-      comments: inlineComments
+      comments: dedupedInlineComments
     });
 
     return {
       skipped: false,
       created: true,
-      inlineCount: inlineComments.length,
-      downgradedInline: false
+      inlineCount: dedupedInlineComments.length,
+      downgradedInline: false,
+      minimizeResult
     };
   } catch (error) {
     await octokit.rest.pulls.createReview({
@@ -208,7 +413,8 @@ async function createReview(octokit, {
       created: true,
       inlineCount: 0,
       downgradedInline: true,
-      reason: `inline_rejected: ${error.message || String(error)}`
+      reason: `inline_rejected: ${error.message || String(error)}`,
+      minimizeResult
     };
   }
 }

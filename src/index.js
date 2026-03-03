@@ -4,6 +4,7 @@ const github = require('@actions/github');
 const { loadConfig } = require('./config');
 const { filterFiles } = require('./globs');
 const { buildDiffLineMaps, resolveInlineLocation } = require('./diff-map');
+const { inlineKeyFromFinding } = require('./inline-key');
 const {
   configureOpenAIClient,
   createPlannerAgent,
@@ -181,6 +182,7 @@ function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
 function buildInlineBody(finding, text) {
   const lines = [];
   const subAgent = String(finding.sourceDimension || 'general').trim().toLowerCase() || 'general';
+  const inlineKey = inlineKeyFromFinding(finding);
   lines.push(`**[${finding.severity.toUpperCase()}] ${finding.title}**`);
   lines.push(finding.summary);
 
@@ -192,6 +194,7 @@ function buildInlineBody(finding, text) {
     lines.push(`${text.riskLabel}: ${finding.risk}`);
   }
 
+  lines.push(`<!-- ai-code-review-agent:inline-key ${inlineKey} -->`);
   lines.push(`<div align="right">${text.fromSubAgentTag(subAgent)}</div>`);
 
   return lines.join('\n\n');
@@ -940,11 +943,12 @@ async function runAction() {
       headSha,
       digest: summaryResult.digest,
       reviewBody,
-      inlineComments
+      inlineComments,
+      autoMinimizeOutdatedComments: config.autoMinimizeOutdatedComments
     });
 
     core.info(
-      `Review result: created=${reviewResult.created} skipped=${reviewResult.skipped} inlineCount=${reviewResult.inlineCount} downgradedInline=${reviewResult.downgradedInline}`
+      `Review result: created=${reviewResult.created} skipped=${reviewResult.skipped} inlineCount=${reviewResult.inlineCount} downgradedInline=${reviewResult.downgradedInline} minimized_outdated=${reviewResult.minimizeResult?.minimized || 0}/${reviewResult.minimizeResult?.attempted || 0} minimize_failed=${reviewResult.minimizeResult?.failed || 0}`
     );
 
     if (reviewResult.downgradedInline) {

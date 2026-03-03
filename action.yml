@@ -46,6 +46,10 @@ inputs:
     description: In round 1, run only primary dimension to maximize file coverage under budget.
     required: false
     default: "true"
+  auto_minimize_outdated_comments:
+    description: Auto-minimize outdated historical inline comments posted by this action.
+    required: false
+    default: "true"
   max_rounds:
     description: Maximum planning/review rounds.
     required: false

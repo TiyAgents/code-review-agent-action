@@ -45,6 +45,7 @@ test('loadConfig applies defaults for confidence and coverage-first mode', () =>
 
   assert.equal(config.minFindingConfidence, 0.72);
   assert.equal(config.coverageFirstRoundPrimaryOnly, true);
+  assert.equal(config.autoMinimizeOutdatedComments, true);
 });
 
 test('loadConfig parses custom confidence and coverage-first mode', () => {
@@ -52,11 +53,13 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
     github_token: 'ghs_xxx',
     openai_api_key: 'sk-test',
     min_finding_confidence: '0.85',
-    coverage_first_round_primary_only: 'false'
+    coverage_first_round_primary_only: 'false',
+    auto_minimize_outdated_comments: 'false'
   });
 
   assert.equal(config.minFindingConfidence, 0.85);
   assert.equal(config.coverageFirstRoundPrimaryOnly, false);
+  assert.equal(config.autoMinimizeOutdatedComments, false);
 });
 
 test('loadConfig rejects invalid confidence range', () => {

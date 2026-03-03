@@ -73,6 +73,10 @@ jobs:
           # true: first round runs only primary dimension to reduce duplicates/cost
           coverage_first_round_primary_only: true
 
+          # [Optional] Auto-minimize outdated historical inline comments from this action; default is true
+          # Allowed values: true, false
+          auto_minimize_outdated_comments: true
+
           # [Optional] Maximum review rounds; default is 8
           # Allowed range: positive integer (>=1)
           # Rough sizing: increase with max_model_calls if many files are changed
