@@ -19,6 +19,26 @@ function parsePositiveIntInput(name, defaultValue) {
   return parsed;
 }
 
+function parseBooleanInput(name, defaultValue) {
+  const raw = String(core.getInput(name) || defaultValue).trim().toLowerCase();
+  if (raw === 'true' || raw === '1' || raw === 'yes') {
+    return true;
+  }
+  if (raw === 'false' || raw === '0' || raw === 'no') {
+    return false;
+  }
+  throw new Error(`Input ${name} must be boolean-like (true/false), got: ${raw}`);
+}
+
+function parseFloatRangeInput(name, defaultValue, min, max) {
+  const raw = core.getInput(name) || String(defaultValue);
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`Input ${name} must be a number in [${min}, ${max}], got: ${raw}`);
+  }
+  return parsed;
+}
+
 function loadConfig() {
   const githubToken = core.getInput('github_token', { required: true });
   const openaiApiKey = core.getInput('openai_api_key') || process.env.OPENAI_API_KEY;
@@ -47,6 +67,8 @@ function loadConfig() {
     reviewerModel: core.getInput('reviewer_model') || 'gpt-5.3-codex',
     reviewDimensions: normalizedDimensions,
     reviewLanguage,
+    minFindingConfidence: parseFloatRangeInput('min_finding_confidence', 0.72, 0, 1),
+    coverageFirstRoundPrimaryOnly: parseBooleanInput('coverage_first_round_primary_only', true),
     maxRounds: parsePositiveIntInput('max_rounds', 8),
     maxModelCalls: parsePositiveIntInput('max_model_calls', 40),
     maxFilesPerBatch: parsePositiveIntInput('max_files_per_batch', 8),

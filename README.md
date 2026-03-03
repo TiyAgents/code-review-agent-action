@@ -17,9 +17,11 @@ This action:
 - Structured schema output validation with one repair retry.
 - Degradation mode: if structured output still fails after repair, posts summary-only with explicit reason.
 - Duplicate suppression for same `head_sha` + same digest.
+- Confidence/evidence gating and semantic deduplication to reduce repeated/low-quality findings.
 - Configurable review language via `review_language` (default `English`).
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
+- Tracing is automatically disabled when `OPENAI_API_BASE` is set (to avoid non-fatal tracing auth errors on custom gateways).
 
 ## Usage
 
@@ -57,6 +59,8 @@ jobs:
           reviewer_model: gpt-5.3-codex
           review_dimensions: general,security,performance,testing
           review_language: English
+          min_finding_confidence: 0.72
+          coverage_first_round_primary_only: true
           max_rounds: 8
           max_model_calls: 40
           max_files_per_batch: 8
@@ -78,12 +82,40 @@ jobs:
 | `reviewer_model` | no | `gpt-5.3-codex` | Subagent model |
 | `review_dimensions` | no | `general,security,performance,testing` | Subagent dimensions |
 | `review_language` | no | `English` | Preferred language for review comments and summary |
+| `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |
+| `coverage_first_round_primary_only` | no | `true` | Round 1 runs only primary dimension for faster file coverage |
 | `max_rounds` | no | `8` | Max planning/review rounds |
 | `max_model_calls` | no | `40` | Hard cap for model calls |
 | `max_files_per_batch` | no | `8` | Batch size cap |
 | `max_context_chars` | no | `128000` | Per-batch context cap |
 | `max_findings` | no | `60` | Max findings retained after dedupe/sort |
 | `max_inline_comments` | no | `30` | Max inline comments posted |
+
+## Budget Sizing (Rough Estimate)
+
+This action spends model calls by **rounds × batches × dimensions**.
+
+Approximation:
+
+```text
+calls ~= rounds * (1 + batches * dimensions)
+batches ~= ceil(patch_files / max_files_per_batch)
+```
+
+- `1` is the planner call in each round.
+- `dimensions` is from `review_dimensions` (default: 4).
+- Cost scales more with **changed file count** than changed line count.
+- With `coverage_first_round_primary_only=true` (default), round 1 often costs less than full dimensions.
+
+Examples:
+- If `patch_files=15`, `max_files_per_batch=8`, `dimensions=4`, one round is about `1 + 2*4 = 9` calls.
+- If `patch_files=100`, `max_files_per_batch=8`, `dimensions=4`, one round is about `1 + 13*4 = 53` calls.
+
+Practical guidance:
+- For medium PRs (10-20 files), start with `max_model_calls: 30-50`.
+- For large PRs (~100 files), start with `max_model_calls: 80-120`.
+- If coverage is low, increase `max_model_calls` first, then `max_rounds`.
+- To control cost, reduce `review_dimensions` (for example `general,security`).
 
 ## Outputs
 

@@ -346,6 +346,7 @@ async function runAction() {
   core.info(`Filtered target file count: ${filteredFiles.length}`);
 
   const targetPaths = filteredFiles.map((f) => f.filename);
+  const targetPathSet = new Set(targetPaths);
   const coverageState = new Map();
   for (const file of filteredFiles) {
     coverageState.set(file.filename, { status: 'pending', reason: '' });
@@ -382,12 +383,17 @@ async function runAction() {
 
   let modelCalls = 0;
   let roundsUsed = 0;
+  let plannerStoppedEarly = false;
 
   if (patchFiles.length > 0) {
     configureOpenAIClient({
       apiKey: config.openaiApiKey,
-      baseURL: config.openaiApiBase || undefined
+      baseURL: config.openaiApiBase || undefined,
+      disableTracing: Boolean(config.openaiApiBase)
     });
+    if (config.openaiApiBase) {
+      core.info('Tracing disabled because custom OPENAI_API_BASE is configured.');
+    }
 
     const planner = createPlannerAgent({
       model: config.plannerModel,
@@ -402,6 +408,9 @@ async function runAction() {
         projectGuidance
       });
     }
+    const primaryDimension = config.reviewDimensions.includes('general')
+      ? 'general'
+      : config.reviewDimensions[0];
 
     for (let round = 1; round <= config.maxRounds; round += 1) {
       const pendingPatchFiles = patchFiles.filter((file) => coverageState.get(file.filename)?.status === 'pending');
@@ -432,6 +441,7 @@ async function runAction() {
       modelCalls += plannerResult.calls;
 
       let plannedBatches = [];
+      let plannerRequestedStop = false;
       if (!plannerResult.ok) {
         degradedSummaryOnly = true;
         degradedReasons.push(`planner_structured_output_failed_round_${round}: ${plannerResult.error.message}`);
@@ -441,6 +451,13 @@ async function runAction() {
           pendingSet,
           config.maxFilesPerBatch
         );
+        plannerRequestedStop = Boolean(plannerResult.output.done);
+      }
+
+      if (plannerRequestedStop && plannedBatches.length === 0) {
+        plannerStoppedEarly = true;
+        core.info(`Planner signaled done at round ${round}; stopping with ${pendingPatchFiles.length} pending patch files.`);
+        break;
       }
 
       if (plannedBatches.length === 0) {
@@ -452,6 +469,27 @@ async function runAction() {
         plannedBatches = fallbackBatches;
       }
 
+      const pendingFileByPath = new Map(pendingPatchFiles.map((file) => [file.filename, file]));
+      const remainingCallBudget = config.maxModelCalls - modelCalls;
+      const callsIfAllDimensions = plannedBatches.length * config.reviewDimensions.length;
+      const callsIfPrimaryOnly = plannedBatches.length;
+      const forcePrimaryOnly = config.coverageFirstRoundPrimaryOnly
+        && round === 1
+        && config.reviewDimensions.length > 1;
+      const budgetPrimaryOnly = !forcePrimaryOnly
+        && config.reviewDimensions.length > 1
+        && remainingCallBudget < callsIfAllDimensions
+        && remainingCallBudget >= callsIfPrimaryOnly;
+      const roundDimensions = (forcePrimaryOnly || budgetPrimaryOnly)
+        ? [primaryDimension]
+        : config.reviewDimensions;
+
+      if (roundDimensions.length === 1 && config.reviewDimensions.length > 1) {
+        core.info(
+          `Round ${round}: using coverage-first mode with primary dimension "${roundDimensions[0]}".`
+        );
+      }
+
       let roundProgress = false;
 
       for (const batch of plannedBatches) {
@@ -460,7 +498,7 @@ async function runAction() {
         }
 
         const batchFiles = batch.filePaths
-          .map((path) => pendingPatchFiles.find((file) => file.filename === path))
+          .map((path) => pendingFileByPath.get(path))
           .filter(Boolean);
 
         if (batchFiles.length === 0) {
@@ -470,7 +508,7 @@ async function runAction() {
         const batchResultByDimension = [];
         let batchSuccessful = false;
 
-        for (const dimension of config.reviewDimensions) {
+        for (const dimension of roundDimensions) {
           if (modelCalls >= config.maxModelCalls) {
             break;
           }
@@ -538,7 +576,7 @@ async function runAction() {
           }
 
           for (const fileConclusion of result.output.fileConclusions || []) {
-            if (!targetPaths.includes(fileConclusion.path)) {
+            if (!targetPathSet.has(fileConclusion.path)) {
               continue;
             }
 
@@ -563,6 +601,12 @@ async function runAction() {
         }
       }
 
+      if (plannerRequestedStop) {
+        plannerStoppedEarly = true;
+        core.info(`Planner requested stop after round ${round}.`);
+        break;
+      }
+
       if (!roundProgress) {
         break;
       }
@@ -570,7 +614,9 @@ async function runAction() {
   }
 
   const normalizedFindings = dedupeAndSortFindings(
-    normalizeFindings(rawFindings, targetPaths),
+    normalizeFindings(rawFindings, targetPaths, {
+      minConfidence: config.minFindingConfidence
+    }),
     config.maxFindings
   );
 
@@ -660,11 +706,14 @@ async function runAction() {
   for (const file of filteredFiles) {
     const state = coverageState.get(file.filename);
     if (!state || state.status === 'pending') {
-      const reason = modelCalls >= config.maxModelCalls
-        ? 'budget_exhausted_before_coverage'
-        : roundsUsed >= config.maxRounds
-          ? 'max_rounds_reached_before_coverage'
-          : 'coverage_incomplete';
+      let reason = 'coverage_incomplete';
+      if (modelCalls >= config.maxModelCalls) {
+        reason = 'budget_exhausted_before_coverage';
+      } else if (roundsUsed >= config.maxRounds) {
+        reason = 'max_rounds_reached_before_coverage';
+      } else if (plannerStoppedEarly) {
+        reason = 'planner_signaled_done_before_coverage';
+      }
       uncovered.push({ path: file.filename, reason });
       if (!fileConclusionsByPath.has(file.filename)) {
         fileConclusionsByPath.set(file.filename, {

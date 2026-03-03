@@ -19,7 +19,7 @@ jobs:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
 
-      - name: Skip (OPENAI_API_KEY Not Configured)
+      - name: Check OPENAI_API_KEY
         if: ${{ env.OPENAI_API_KEY == '' }}
         run: echo "OPENAI_API_KEY is not set. Skip self-test run."
 
@@ -46,8 +46,8 @@ jobs:
             **/dist/**
           review_language: English
           max_rounds: 2
-          max_model_calls: 8
-          max_files_per_batch: 6
+          max_model_calls: 64
+          max_files_per_batch: 8
           max_context_chars: 64000
           max_findings: 30
           max_inline_comments: 10
