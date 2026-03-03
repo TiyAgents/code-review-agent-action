@@ -23,6 +23,7 @@ This action:
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
 - Tracing is automatically disabled when `OPENAI_API_BASE` is set (to avoid non-fatal tracing auth errors on custom gateways).
 - General-first routing: batch review starts with `general`, and only `general` can dynamically request extra dimensions for that batch.
+- Security note: when using `openai_api_base`, only point to trusted HTTPS gateways you control (prefer an allowlist); this endpoint receives review context payloads.
 
 ## Usage
 
