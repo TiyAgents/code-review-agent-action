@@ -224,7 +224,12 @@ function dedupeAndSortFindings(findings, maxFindings) {
     return (a.line || 0) - (b.line || 0);
   });
 
-  return deduped.slice(0, maxFindings);
+  const numericLimit = Number(maxFindings);
+  const limit = Number.isFinite(numericLimit)
+    ? Math.trunc(numericLimit)
+    : deduped.length;
+  const effectiveLimit = limit < 0 ? deduped.length : limit;
+  return deduped.slice(0, effectiveLimit);
 }
 
 function groupFindingsBySeverity(findings) {

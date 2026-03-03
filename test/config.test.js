@@ -69,3 +69,13 @@ test('loadConfig rejects invalid confidence range', () => {
     /min_finding_confidence must be a number in \[0, 1\]/
   );
 });
+
+test('loadConfig normalizes and deduplicates review_dimensions while preserving order', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    review_dimensions: 'GENERAL, security,General, testing,security'
+  });
+
+  assert.deepEqual(config.reviewDimensions, ['general', 'security', 'testing']);
+});

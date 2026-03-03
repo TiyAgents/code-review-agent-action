@@ -129,6 +129,12 @@ test('dedupeAndSortFindings handles maxFindings boundaries predictably', () => {
 
   const none = dedupeAndSortFindings(findings, 0);
   assert.equal(none.length, 0);
+
+  const fallbackOnNegative = dedupeAndSortFindings(findings, -1);
+  assert.equal(fallbackOnNegative.length, 3);
+
+  const fallbackOnNaN = dedupeAndSortFindings(findings, Number.NaN);
+  assert.equal(fallbackOnNaN.length, 3);
 });
 
 test('dedupeAndSortFindings keeps deterministic order on same severity/confidence', () => {
