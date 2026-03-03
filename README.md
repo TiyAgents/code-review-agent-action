@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: AI Code Review
-        uses: owner/code-review-agent-action@v1
+        uses: TiyAgents/code-review-agent-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
@@ -62,9 +62,9 @@ jobs:
           min_finding_confidence: 0.72
           coverage_first_round_primary_only: true
           max_rounds: 8
-          max_model_calls: 40
+          max_model_calls: 128
           max_files_per_batch: 8
-          max_context_chars: 128000
+          max_context_chars: 256000
           max_findings: 60
           max_inline_comments: 30
 ```
