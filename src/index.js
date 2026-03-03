@@ -884,7 +884,7 @@ async function runAction() {
     core.info('No files matched include/exclude filters; publishing minimal summary.');
   }
 
-  const summaryMarkdown = formatSummaryMarkdown({
+  const buildSummaryMarkdown = () => formatSummaryMarkdown({
     pull: pr,
     reviewLanguage: config.reviewLanguage,
     findings: normalizedFindings,
@@ -911,7 +911,8 @@ async function runAction() {
     degradedReasons
   });
 
-  const summaryResult = await upsertSummaryComment(octokit, {
+  let summaryMarkdown = buildSummaryMarkdown();
+  let summaryResult = await upsertSummaryComment(octokit, {
     owner,
     repo,
     issueNumber: pullNumber,
@@ -957,6 +958,23 @@ async function runAction() {
         'inline_rejected_by_github_api',
         reviewResult.reason || 'inline_rejected_by_github_api'
       );
+
+      const updatedSummaryMarkdown = buildSummaryMarkdown();
+      if (updatedSummaryMarkdown !== summaryMarkdown) {
+        summaryMarkdown = updatedSummaryMarkdown;
+        summaryResult = await upsertSummaryComment(octokit, {
+          owner,
+          repo,
+          issueNumber: pullNumber,
+          summaryMarker: config.summaryMarker,
+          headSha,
+          summaryMarkdown
+        });
+
+        core.info(
+          `Summary comment refreshed after inline downgrade: created=${summaryResult.created} updated=${summaryResult.updated} skipped=${summaryResult.skipped}`
+        );
+      }
     }
   } else {
     core.warning('Structured output degradation active: skipped PR review creation and posted summary only.');

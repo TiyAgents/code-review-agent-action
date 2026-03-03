@@ -391,3 +391,152 @@ test('createReview minimizes outdated historical inline comments posted by this 
   assert.equal(hydrateCalls, 1);
   assert.deepEqual(minimizedSubjectIds, ['PRRC_old']);
 });
+
+test('createReview tolerates graphql hydrate failure and still creates review', async () => {
+  const mutationSubjectIds = [];
+  const createCalls = [];
+  const octokit = {
+    paginate: async (method) => {
+      if (method === octokit.rest.pulls.listReviews) {
+        return [];
+      }
+      if (method === octokit.rest.pulls.listReviewComments) {
+        return [
+          {
+            node_id: 'PRRC_old',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 8,
+            body: '**[LOW] Old issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key old_issue -->'
+          }
+        ];
+      }
+      return [];
+    },
+    graphql: async (_query, variables) => {
+      if (Array.isArray(variables.ids)) {
+        throw new Error('rate limit');
+      }
+      mutationSubjectIds.push(variables.subjectId);
+      return {};
+    },
+    rest: {
+      pulls: {
+        listReviews: () => {
+        },
+        listReviewComments: () => {
+        },
+        createReview: async (payload) => {
+          createCalls.push(payload);
+          return { data: { id: 1 } };
+        }
+      }
+    }
+  };
+
+  const result = await createReview(octokit, {
+    owner: 'o',
+    repo: 'r',
+    pullNumber: 1,
+    reviewMarker: 'ai-code-review-agent:review',
+    headSha: 'sha5',
+    digest: 'd5',
+    reviewBody: 'review body',
+    inlineComments: [
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 10,
+        body: '**[MEDIUM] New issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key new_issue -->'
+      }
+    ]
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.inlineCount, 1);
+  assert.equal(result.minimizeResult.attempted, 1);
+  assert.equal(result.minimizeResult.minimized, 1);
+  assert.equal(result.minimizeResult.failed, 0);
+  assert.deepEqual(mutationSubjectIds, ['PRRC_old']);
+  assert.equal(createCalls.length, 1);
+});
+
+test('createReview counts partial minimize failures while continuing remaining mutations', async () => {
+  const mutationSubjectIds = [];
+  const octokit = {
+    paginate: async (method) => {
+      if (method === octokit.rest.pulls.listReviews) {
+        return [];
+      }
+      if (method === octokit.rest.pulls.listReviewComments) {
+        return [
+          {
+            node_id: 'PRRC_old_1',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 8,
+            body: '**[LOW] Old issue 1**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key old_issue_1 -->'
+          },
+          {
+            node_id: 'PRRC_old_2',
+            path: 'a.js',
+            side: 'RIGHT',
+            line: 9,
+            body: '**[LOW] Old issue 2**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key old_issue_2 -->'
+          }
+        ];
+      }
+      return [];
+    },
+    graphql: async (_query, variables) => {
+      if (Array.isArray(variables.ids)) {
+        return {
+          nodes: [
+            { id: 'PRRC_old_1', isMinimized: false },
+            { id: 'PRRC_old_2', isMinimized: false }
+          ]
+        };
+      }
+
+      mutationSubjectIds.push(variables.subjectId);
+      if (variables.subjectId === 'PRRC_old_1') {
+        throw new Error('temporary github mutation failure');
+      }
+      return {};
+    },
+    rest: {
+      pulls: {
+        listReviews: () => {
+        },
+        listReviewComments: () => {
+        },
+        createReview: async () => ({ data: { id: 1 } })
+      }
+    }
+  };
+
+  const result = await createReview(octokit, {
+    owner: 'o',
+    repo: 'r',
+    pullNumber: 1,
+    reviewMarker: 'ai-code-review-agent:review',
+    headSha: 'sha6',
+    digest: 'd6',
+    reviewBody: 'review body',
+    inlineComments: [
+      {
+        path: 'a.js',
+        side: 'RIGHT',
+        line: 10,
+        body: '**[MEDIUM] New issue**\n\nsummary\n\n<!-- ai-code-review-agent:inline-key new_issue -->'
+      }
+    ]
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.inlineCount, 1);
+  assert.equal(result.minimizeResult.attempted, 2);
+  assert.equal(result.minimizeResult.minimized, 1);
+  assert.equal(result.minimizeResult.failed, 1);
+  assert.deepEqual(mutationSubjectIds, ['PRRC_old_1', 'PRRC_old_2']);
+});
