@@ -37,6 +37,11 @@ jobs:
           # [可选] SubAgent 使用模型；默认 gpt-5.3-codex
           # 可选值：任意可用模型名（字符串）
           reviewer_model: ${{ vars.DEFAULT_OPENAI_MODEL }}
+
+          openai_api_base_allowlist: |
+            api.openai.com
+            zenmux.ai
+
           include: |
             **/*.js
             **/*.ts

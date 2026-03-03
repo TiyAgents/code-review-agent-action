@@ -14,6 +14,10 @@ inputs:
   openai_api_base:
     description: Optional OpenAI API base URL. Falls back to OPENAI_API_BASE env.
     required: false
+  openai_api_base_allowlist:
+    description: Comma/newline separated allowed hostnames for openai_api_base (HTTPS only).
+    required: false
+    default: api.openai.com
   include:
     description: Include globs (comma/newline separated).
     required: false

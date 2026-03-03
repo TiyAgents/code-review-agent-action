@@ -80,3 +80,23 @@ test('loadProjectGuidance falls back to lower-priority files', async () => {
   assert.equal(result.content, 'CLAUDE guidance');
 });
 
+test('loadProjectGuidance returns sanitized error code for non-404 failures', async () => {
+  const octokit = {
+    rest: {
+      repos: {
+        getContent: async () => {
+          throw Object.assign(new Error('token xyz internal-host failed'), { status: 500 });
+        }
+      }
+    }
+  };
+
+  const result = await loadProjectGuidance(octokit, {
+    owner: 'o',
+    repo: 'r',
+    ref: 'sha'
+  });
+
+  assert.equal(result.found, false);
+  assert.equal(result.error, 'guidance_load_failed_status_500');
+});

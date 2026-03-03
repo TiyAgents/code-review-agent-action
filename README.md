@@ -23,6 +23,7 @@ This action:
 - Confidence/evidence gating and semantic deduplication to reduce repeated/low-quality findings.
 - Configurable review language via `review_language` (default `English`).
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
+- Enforces `openai_api_base` safety: HTTPS only, no URL credentials, and hostname allowlist (default `api.openai.com`).
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
 - Tracing is automatically disabled when `OPENAI_API_BASE` is set (to avoid non-fatal tracing auth errors on custom gateways).
 - General-first routing: batch review starts with `general`, and only `general` can dynamically request extra dimensions for that batch.
@@ -52,6 +53,9 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           openai_api_base: ${{ vars.OPENAI_API_BASE }}
+          openai_api_base_allowlist: |
+            api.openai.com
+            your-gateway.example.com
           include: |
             **/*.js
             **/*.ts
@@ -82,6 +86,7 @@ jobs:
 | `github_token` | yes | - | GitHub token with review/comment write permissions |
 | `openai_api_key` | no | env `OPENAI_API_KEY` | OpenAI API key |
 | `openai_api_base` | no | env `OPENAI_API_BASE` | Optional custom OpenAI-compatible base URL |
+| `openai_api_base_allowlist` | no | `api.openai.com` | Allowed hostnames for `openai_api_base` (HTTPS only) |
 | `include` | no | `**` | Include globs (comma/newline separated) |
 | `exclude` | no | empty | Exclude globs (comma/newline separated) |
 | `planner_model` | no | `gpt-5.3-codex` | Planner model |

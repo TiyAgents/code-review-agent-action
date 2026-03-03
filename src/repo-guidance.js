@@ -1,6 +1,14 @@
 const PROJECT_GUIDANCE_FILES = ['AGENTS.md', 'AGENT.md', 'CLAUDE.md'];
 const DEFAULT_MAX_GUIDANCE_CHARS = 12000;
 
+function toGuidanceErrorCode(error) {
+  const status = Number.parseInt(String(error?.status || ''), 10);
+  if (Number.isFinite(status) && status > 0) {
+    return `guidance_load_failed_status_${status}`;
+  }
+  return 'guidance_load_failed';
+}
+
 function normalizeGuidanceContent(content, maxChars = DEFAULT_MAX_GUIDANCE_CHARS) {
   const clean = String(content || '').trim();
   if (!clean) {
@@ -69,7 +77,7 @@ async function loadProjectGuidance(octokit, {
         path: null,
         content: '',
         truncated: false,
-        error: error.message || String(error)
+        error: toGuidanceErrorCode(error)
       };
     }
   }
@@ -85,6 +93,7 @@ async function loadProjectGuidance(octokit, {
 module.exports = {
   PROJECT_GUIDANCE_FILES,
   DEFAULT_MAX_GUIDANCE_CHARS,
+  toGuidanceErrorCode,
   normalizeGuidanceContent,
   loadProjectGuidance
 };
