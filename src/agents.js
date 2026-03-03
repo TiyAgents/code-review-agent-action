@@ -1,4 +1,4 @@
-const { Agent, run, setDefaultOpenAIClient } = require('@openai/agents');
+const { Agent, run, setDefaultOpenAIClient, setTracingDisabled } = require('@openai/agents');
 const OpenAIImport = require('openai');
 const { z } = require('zod');
 
@@ -25,6 +25,9 @@ const findingSchema = z.object({
   path: z.string().min(1),
   side: z.enum(['LEFT', 'RIGHT', 'FILE']).default('RIGHT'),
   line: z.number().int().positive().nullable().default(null),
+  confidence: z.number().min(0).max(1).default(0.8),
+  evidence: z.array(z.string().min(1)).default([]),
+  fingerprint: z.string().max(120).default(''),
   summary: z.string().min(1),
   suggestion: z.string().default(''),
   risk: z.string().default('')
@@ -47,12 +50,13 @@ const reviewOutputSchema = z.object({
   testSuggestions: z.array(z.string()).default([])
 });
 
-function configureOpenAIClient({ apiKey, baseURL }) {
+function configureOpenAIClient({ apiKey, baseURL, disableTracing }) {
   const client = new OpenAI({
     apiKey,
     ...(baseURL ? { baseURL } : {})
   });
   setDefaultOpenAIClient(client);
+  setTracingDisabled(Boolean(disableTracing));
 }
 
 function buildProjectGuidanceInstructions(projectGuidance) {
@@ -116,6 +120,9 @@ Rules:
 - Use path/side/line when you can map issue to diff lines; otherwise side=FILE and line=null.
 - Do not invent files or line numbers.
 - Severity must be one of critical/high/medium/low.
+- Set confidence in [0,1]. Include at least one concrete evidence item tied to provided diff context.
+- If confidence is below 0.70, do not emit it as a finding; put it in file-level notes instead.
+- Use fingerprint as stable short key for same issue across dimensions (e.g. unsafe_openai_base_url, planner_done_ignored).
 - Keep findings concrete, actionable, and concise.
 - Provide file-level conclusions for all files in this batch, including no-risk files.
 Output must follow schema exactly.`,

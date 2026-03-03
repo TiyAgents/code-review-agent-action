@@ -1,0 +1,71 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+
+function loadConfigWithMockedInputs(inputs, env = {}) {
+  const originalLoad = Module._load;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalApiBase = process.env.OPENAI_API_BASE;
+
+  process.env.OPENAI_API_KEY = env.OPENAI_API_KEY || '';
+  process.env.OPENAI_API_BASE = env.OPENAI_API_BASE || '';
+
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === '@actions/core') {
+      return {
+        getInput(name, options = {}) {
+          const value = Object.prototype.hasOwnProperty.call(inputs, name) ? inputs[name] : '';
+          if (options.required && !value) {
+            throw new Error(`Input required and not supplied: ${name}`);
+          }
+          return value;
+        }
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  try {
+    delete require.cache[require.resolve('../src/config')];
+    const { loadConfig } = require('../src/config');
+    return loadConfig();
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[require.resolve('../src/config')];
+    process.env.OPENAI_API_KEY = originalApiKey;
+    process.env.OPENAI_API_BASE = originalApiBase;
+  }
+}
+
+test('loadConfig applies defaults for confidence and coverage-first mode', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test'
+  });
+
+  assert.equal(config.minFindingConfidence, 0.72);
+  assert.equal(config.coverageFirstRoundPrimaryOnly, true);
+});
+
+test('loadConfig parses custom confidence and coverage-first mode', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    min_finding_confidence: '0.85',
+    coverage_first_round_primary_only: 'false'
+  });
+
+  assert.equal(config.minFindingConfidence, 0.85);
+  assert.equal(config.coverageFirstRoundPrimaryOnly, false);
+});
+
+test('loadConfig rejects invalid confidence range', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      min_finding_confidence: '1.5'
+    }),
+    /min_finding_confidence must be a number in \[0, 1\]/
+  );
+});

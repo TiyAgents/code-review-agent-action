@@ -38,6 +38,14 @@ inputs:
     description: Preferred language for review comments and summary.
     required: false
     default: English
+  min_finding_confidence:
+    description: Minimum confidence (0-1) required for a finding to be kept.
+    required: false
+    default: "0.72"
+  coverage_first_round_primary_only:
+    description: In round 1, run only primary dimension to maximize file coverage under budget.
+    required: false
+    default: "true"
   max_rounds:
     description: Maximum planning/review rounds.
     required: false
