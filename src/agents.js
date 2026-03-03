@@ -55,7 +55,29 @@ function configureOpenAIClient({ apiKey, baseURL }) {
   setDefaultOpenAIClient(client);
 }
 
-function createPlannerAgent(model) {
+function buildProjectGuidanceInstructions(projectGuidance) {
+  if (!projectGuidance || !projectGuidance.content) {
+    return '';
+  }
+
+  const truncatedHint = projectGuidance.truncated
+    ? 'Note: guidance content is truncated for prompt budget.'
+    : '';
+
+  return `
+Repository contributor guidance (${projectGuidance.path}):
+<project_guidance>
+${projectGuidance.content}
+</project_guidance>
+${truncatedHint}
+- Follow this guidance when it applies to review decisions.
+- If guidance conflicts with explicit task rules, explicit task rules win.
+`;
+}
+
+function createPlannerAgent({ model, projectGuidance }) {
+  const guidanceBlock = buildProjectGuidanceInstructions(projectGuidance);
+
   return new Agent({
     name: 'Review Planner',
     model,
@@ -67,18 +89,20 @@ Rules:
 - Prioritize risky files first (security-sensitive, infra, dependency, auth, concurrency).
 - Prefer balanced batches by file size and risk.
 - Set done=true only when no pending files remain or budget makes further work impossible.
+${guidanceBlock}
 Output must follow schema exactly.`,
     outputType: plannerOutputSchema
   });
 }
 
-function createReviewerAgent({ dimension, model, language }) {
+function createReviewerAgent({ dimension, model, language, projectGuidance }) {
   const dimensionPrompt = {
     general: 'Focus on correctness, maintainability, edge cases, and regressions.',
     security: 'Focus on vulnerabilities, authn/authz, injection, secrets, unsafe deserialization, SSRF, path traversal, and supply chain risk.',
     performance: 'Focus on algorithmic complexity, memory, I/O, network, locking contention, and scalability bottlenecks.',
     testing: 'Focus on missing test coverage, flaky scenarios, boundary conditions, and observability gaps.'
   }[dimension] || 'Focus on correctness and practical engineering risks.';
+  const guidanceBlock = buildProjectGuidanceInstructions(projectGuidance);
 
   return new Agent({
     name: `${dimension} reviewer`,
@@ -86,6 +110,7 @@ function createReviewerAgent({ dimension, model, language }) {
     instructions: `You are a ${dimension} code review sub-agent.
 ${dimensionPrompt}
 Use this language for all natural-language output fields: ${language || 'English'}.
+${guidanceBlock}
 Rules:
 - Review ONLY the provided file list and diff snippets.
 - Use path/side/line when you can map issue to diff lines; otherwise side=FILE and line=null.
