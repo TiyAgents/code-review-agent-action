@@ -8,6 +8,7 @@ const {
   chunk,
   sanitizePlannedBatches,
   shouldUseSummaryOnlyMode,
+  formatConfidenceValue,
   buildInlineBody,
   formatSummaryMarkdown
 } = __internal;
@@ -74,6 +75,36 @@ test('buildInlineBody includes severity, labels, inline key marker, and sub-agen
   assert.match(body, /ai-code-review-agent:inline-key/);
   assert.match(body, /\[From SubAgent: security\]/);
   assert.ok(body.indexOf('Confidence: 0.93') < body.indexOf('[From SubAgent: security]'));
+});
+
+test('formatConfidenceValue handles invalid and boundary values predictably', () => {
+  assert.equal(formatConfidenceValue(undefined), '0.80');
+  assert.equal(formatConfidenceValue(null), '0.80');
+  assert.equal(formatConfidenceValue('abc'), '0.80');
+  assert.equal(formatConfidenceValue(-0.1), '0.00');
+  assert.equal(formatConfidenceValue(1.2), '1.00');
+  assert.equal(formatConfidenceValue('0.345'), '0.34');
+  assert.equal(formatConfidenceValue(0), '0.00');
+  assert.equal(formatConfidenceValue(1), '1.00');
+});
+
+test('buildInlineBody renders chinese confidence label before sub-agent tag', () => {
+  const text = getTextBundle('zh-CN');
+  const body = buildInlineBody({
+    severity: 'low',
+    title: '缺少日志上下文',
+    summary: '建议补充必要上下文便于排查。',
+    confidence: 0.88,
+    path: 'src/a.js',
+    side: 'RIGHT',
+    line: 6,
+    sourceDimension: 'testing'
+  }, text);
+
+  assert.match(body, /\*\*\[LOW\] 缺少日志上下文\*\*/);
+  assert.match(body, /置信度: 0.88/);
+  assert.match(body, /\[来自 SubAgent：testing\]/);
+  assert.ok(body.indexOf('置信度: 0.88') < body.indexOf('[来自 SubAgent：testing]'));
 });
 
 test('formatSummaryMarkdown supports unknown severities and degraded reasons', () => {
