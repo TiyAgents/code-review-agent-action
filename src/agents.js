@@ -25,7 +25,7 @@ const findingSchema = z.object({
   path: z.string().min(1),
   side: z.enum(['LEFT', 'RIGHT', 'FILE']).default('RIGHT'),
   line: z.number().int().positive().nullable().default(null),
-  confidence: z.number().min(0).max(1).default(0.8),
+  confidence: z.number().min(0).max(1).nullable().optional().default(null),
   evidence: z.array(z.string().min(1)).default([]),
   fingerprint: z.string().max(120).default(''),
   summary: z.string().min(1),
@@ -126,7 +126,8 @@ Rules:
 - Never emit line numbers that do not appear in the provided anchors.
 - Do not invent files or line numbers.
 - Severity must be one of critical/high/medium/low.
-- Set confidence in [0,1]. Include at least one concrete evidence item tied to provided diff context.
+- Set confidence in [0,1] when you can estimate it; otherwise use null.
+- Include at least one concrete evidence item tied to provided diff context.
 - If confidence is below 0.70, do not emit it as a finding; put it in file-level notes instead.
 - Use fingerprint as stable short key for same issue across dimensions (e.g. unsafe_openai_base_url, planner_done_ignored).
 - Keep findings concrete, actionable, and concise.

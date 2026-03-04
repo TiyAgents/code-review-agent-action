@@ -78,9 +78,9 @@ test('buildInlineBody includes severity, labels, inline key marker, and sub-agen
 });
 
 test('formatConfidenceValue handles invalid and boundary values predictably', () => {
-  assert.equal(formatConfidenceValue(undefined), '0.80');
-  assert.equal(formatConfidenceValue(null), '0.80');
-  assert.equal(formatConfidenceValue('abc'), '0.80');
+  assert.equal(formatConfidenceValue(undefined), 'N/A');
+  assert.equal(formatConfidenceValue(null), 'N/A');
+  assert.equal(formatConfidenceValue('abc'), 'N/A');
   assert.equal(formatConfidenceValue(-0.1), '0.00');
   assert.equal(formatConfidenceValue(1.2), '1.00');
   assert.equal(formatConfidenceValue('0.345'), '0.34');
@@ -105,6 +105,23 @@ test('buildInlineBody renders chinese confidence label before sub-agent tag', ()
   assert.match(body, /置信度: 0.88/);
   assert.match(body, /\[来自 SubAgent：testing\]/);
   assert.ok(body.indexOf('置信度: 0.88') < body.indexOf('[来自 SubAgent：testing]'));
+});
+
+test('buildInlineBody renders N/A for missing confidence', () => {
+  const text = getTextBundle('English');
+  const body = buildInlineBody({
+    severity: 'low',
+    title: 'Unknown confidence finding',
+    summary: 'Confidence value is unavailable.',
+    path: 'src/a.js',
+    side: 'RIGHT',
+    line: 3,
+    sourceDimension: 'general'
+  }, text);
+
+  assert.match(body, /Confidence: N\/A/);
+  assert.match(body, /\[From SubAgent: general\]/);
+  assert.ok(body.indexOf('Confidence: N/A') < body.indexOf('[From SubAgent: general]'));
 });
 
 test('formatSummaryMarkdown supports unknown severities and degraded reasons', () => {
@@ -150,6 +167,7 @@ test('formatSummaryMarkdown supports unknown severities and degraded reasons', (
   assert.match(markdown, /## AI Code Review Summary/);
   assert.match(markdown, /- MEDIUM \(1\)/);
   assert.match(markdown, /Unknown severity should be grouped/);
+  assert.match(markdown, /Findings with unknown confidence \(N\/A\): 0/);
   assert.match(markdown, /Structured-output summary-only degradation: YES/);
   assert.match(markdown, /planner_structured_output_failed_round_1: unknown_error/);
 });
