@@ -50,6 +50,14 @@ inputs:
     description: Minimum confidence (0-1) required for a finding to be kept.
     required: false
     default: "0.72"
+  missing_confidence_policy:
+    description: Policy when finding confidence is missing/invalid (drop|na|fallback).
+    required: false
+    default: "na"
+  fallback_confidence_value:
+    description: Fallback confidence (0-1) used only when missing_confidence_policy=fallback.
+    required: false
+    default: "0.5"
   coverage_first_round_primary_only:
     description: In round 1, run only primary dimension to maximize file coverage under budget.
     required: false

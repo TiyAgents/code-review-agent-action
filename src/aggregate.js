@@ -70,6 +70,10 @@ function jaccardSimilarity(a, b) {
   return union.size === 0 ? 0 : intersection / union.size;
 }
 
+function confidenceRank(value) {
+  return Number.isFinite(value) ? value : -1;
+}
+
 function isSemanticallySameIssue(a, b) {
   if (
     a.fingerprint &&
@@ -102,11 +106,14 @@ function isSemanticallySameIssue(a, b) {
 }
 
 function mergeFinding(base, incoming) {
-  const preferIncoming = incoming.confidence > base.confidence;
+  const baseRank = confidenceRank(base.confidence);
+  const incomingRank = confidenceRank(incoming.confidence);
+  const preferIncoming = incomingRank > baseRank;
   const mergedEvidence = [...new Set([...(base.evidence || []), ...(incoming.evidence || [])])].slice(0, 3);
   const severity = SEVERITY_RANK[incoming.severity] > SEVERITY_RANK[base.severity]
     ? incoming.severity
     : base.severity;
+  const mergedConfidence = incomingRank >= baseRank ? incoming.confidence : base.confidence;
   return {
     ...base,
     ...(preferIncoming
@@ -118,7 +125,7 @@ function mergeFinding(base, incoming) {
         }
       : {}),
     severity,
-    confidence: Math.max(base.confidence, incoming.confidence),
+    confidence: mergedConfidence,
     evidence: mergedEvidence,
     fingerprint: base.fingerprint || incoming.fingerprint,
     sourceDimension: preferIncoming
@@ -130,6 +137,13 @@ function mergeFinding(base, incoming) {
 function normalizeFindings(findings, allowedPaths, options = {}) {
   const pathSet = new Set(allowedPaths);
   const minConfidence = Number.isFinite(options.minConfidence) ? options.minConfidence : 0;
+  const missingConfidencePolicy = ['drop', 'na', 'fallback'].includes(options.missingConfidencePolicy)
+    ? options.missingConfidencePolicy
+    : 'na';
+  const fallbackConfidenceValueRaw = Number.parseFloat(String(options.fallbackConfidenceValue ?? '0.5'));
+  const fallbackConfidenceValue = Number.isFinite(fallbackConfidenceValueRaw)
+    ? clamp(fallbackConfidenceValueRaw, 0, 1)
+    : 0.5;
   const out = [];
 
   for (const finding of findings || []) {
@@ -143,11 +157,23 @@ function normalizeFindings(findings, allowedPaths, options = {}) {
     const line = Number.isInteger(finding.line) && finding.line > 0 ? finding.line : null;
     const title = String(finding.title || '').trim();
     const summary = String(finding.summary || '').trim();
-    const confidenceRaw = Number.parseFloat(String(finding.confidence ?? '0.8'));
-    const confidence = Number.isFinite(confidenceRaw) ? clamp(confidenceRaw, 0, 1) : 0.8;
+    const confidenceRaw = Number.parseFloat(String(finding.confidence));
+    let confidence = Number.isFinite(confidenceRaw) ? clamp(confidenceRaw, 0, 1) : null;
     const evidence = normalizeEvidence(finding.evidence);
 
-    if (!title || !summary || evidence.length === 0 || confidence < minConfidence) {
+    if (confidence === null) {
+      if (missingConfidencePolicy === 'drop') {
+        continue;
+      }
+      if (missingConfidencePolicy === 'fallback') {
+        confidence = fallbackConfidenceValue;
+      }
+    }
+
+    if (!title || !summary || evidence.length === 0) {
+      continue;
+    }
+    if (Number.isFinite(confidence) && confidence < minConfidence) {
       continue;
     }
 
@@ -216,7 +242,7 @@ function dedupeAndSortFindings(findings, maxFindings) {
       return pathDiff;
     }
 
-    const confidenceDiff = (b.confidence || 0) - (a.confidence || 0);
+    const confidenceDiff = confidenceRank(b.confidence) - confidenceRank(a.confidence);
     if (confidenceDiff !== 0) {
       return confidenceDiff;
     }

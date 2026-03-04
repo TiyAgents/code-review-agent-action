@@ -75,6 +75,15 @@ function parseFloatRangeInput(name, defaultValue, min, max) {
   return parsed;
 }
 
+function parseEnumInput(name, defaultValue, allowedValues) {
+  const raw = core.getInput(name) || String(defaultValue);
+  const normalized = String(raw).trim().toLowerCase();
+  if (!allowedValues.includes(normalized)) {
+    throw new Error(`Input ${name} must be one of [${allowedValues.join(', ')}], got: ${raw}`);
+  }
+  return normalized;
+}
+
 function uniqueLowercase(items) {
   const seen = new Set();
   const out = [];
@@ -123,6 +132,8 @@ function loadConfig() {
     reviewDimensions: normalizedDimensions,
     reviewLanguage,
     minFindingConfidence: parseFloatRangeInput('min_finding_confidence', 0.72, 0, 1),
+    missingConfidencePolicy: parseEnumInput('missing_confidence_policy', 'na', ['drop', 'na', 'fallback']),
+    fallbackConfidenceValue: parseFloatRangeInput('fallback_confidence_value', 0.5, 0, 1),
     coverageFirstRoundPrimaryOnly: parseBooleanInput('coverage_first_round_primary_only', true),
     autoMinimizeOutdatedComments: parseBooleanInput('auto_minimize_outdated_comments', true),
     maxRounds: parsePositiveIntInput('max_rounds', 8),

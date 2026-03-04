@@ -44,6 +44,8 @@ test('loadConfig applies defaults for confidence and coverage-first mode', () =>
   });
 
   assert.equal(config.minFindingConfidence, 0.72);
+  assert.equal(config.missingConfidencePolicy, 'na');
+  assert.equal(config.fallbackConfidenceValue, 0.5);
   assert.equal(config.coverageFirstRoundPrimaryOnly, true);
   assert.equal(config.autoMinimizeOutdatedComments, true);
   assert.deepEqual(config.openaiApiBaseAllowlist, ['api.openai.com']);
@@ -54,6 +56,8 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
     github_token: 'ghs_xxx',
     openai_api_key: 'sk-test',
     min_finding_confidence: '0.85',
+    missing_confidence_policy: 'fallback',
+    fallback_confidence_value: '0.65',
     coverage_first_round_primary_only: 'false',
     auto_minimize_outdated_comments: 'false',
     openai_api_base: 'https://gateway.example.com/v1',
@@ -61,6 +65,8 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
   });
 
   assert.equal(config.minFindingConfidence, 0.85);
+  assert.equal(config.missingConfidencePolicy, 'fallback');
+  assert.equal(config.fallbackConfidenceValue, 0.65);
   assert.equal(config.coverageFirstRoundPrimaryOnly, false);
   assert.equal(config.autoMinimizeOutdatedComments, false);
   assert.equal(config.openaiApiBase, 'https://gateway.example.com/v1');
@@ -75,6 +81,28 @@ test('loadConfig rejects invalid confidence range', () => {
       min_finding_confidence: '1.5'
     }),
     /min_finding_confidence must be a number in \[0, 1\]/
+  );
+});
+
+test('loadConfig rejects invalid missing_confidence_policy', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      missing_confidence_policy: 'invalid'
+    }),
+    /missing_confidence_policy must be one of \[drop, na, fallback\]/
+  );
+});
+
+test('loadConfig rejects invalid fallback_confidence_value range', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      fallback_confidence_value: '-0.1'
+    }),
+    /fallback_confidence_value must be a number in \[0, 1\]/
   );
 });
 

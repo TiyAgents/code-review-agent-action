@@ -178,8 +178,8 @@ test('normalizeFindings handles confidence/evidence type anomalies predictably',
   const findings = [
     {
       path: 'src/a.js',
-      title: 'NaN confidence defaults',
-      summary: 'NaN confidence should fall back to default 0.8',
+      title: 'NaN confidence is unknown',
+      summary: 'NaN confidence should be kept as unknown by default policy',
       severity: 'LOW',
       side: 'LEFT',
       line: -2,
@@ -200,10 +200,61 @@ test('normalizeFindings handles confidence/evidence type anomalies predictably',
 
   const normalized = normalizeFindings(findings, allowed, { minConfidence: 0.72 });
   assert.equal(normalized.length, 1);
-  assert.equal(normalized[0].title, 'NaN confidence defaults');
-  assert.equal(normalized[0].confidence, 0.8);
+  assert.equal(normalized[0].title, 'NaN confidence is unknown');
+  assert.equal(normalized[0].confidence, null);
   assert.equal(normalized[0].side, 'LEFT');
   assert.equal(normalized[0].line, null);
+});
+
+test('normalizeFindings drops findings with missing confidence when policy is drop', () => {
+  const allowed = ['src/a.js'];
+  const findings = [
+    {
+      path: 'src/a.js',
+      title: 'Unknown confidence',
+      summary: 'confidence missing',
+      severity: 'LOW',
+      side: 'RIGHT',
+      line: 2,
+      evidence: ['e1']
+    }
+  ];
+
+  const normalized = normalizeFindings(findings, allowed, {
+    minConfidence: 0.72,
+    missingConfidencePolicy: 'drop'
+  });
+  assert.equal(normalized.length, 0);
+});
+
+test('normalizeFindings applies fallback confidence and min threshold when policy is fallback', () => {
+  const allowed = ['src/a.js'];
+  const findings = [
+    {
+      path: 'src/a.js',
+      title: 'Fallback confidence',
+      summary: 'confidence missing',
+      severity: 'LOW',
+      side: 'RIGHT',
+      line: 2,
+      evidence: ['e1']
+    }
+  ];
+
+  const kept = normalizeFindings(findings, allowed, {
+    minConfidence: 0.72,
+    missingConfidencePolicy: 'fallback',
+    fallbackConfidenceValue: 0.85
+  });
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].confidence, 0.85);
+
+  const dropped = normalizeFindings(findings, allowed, {
+    minConfidence: 0.72,
+    missingConfidencePolicy: 'fallback',
+    fallbackConfidenceValue: 0.5
+  });
+  assert.equal(dropped.length, 0);
 });
 
 test('groupFindingsBySeverity falls back unknown severities to medium', () => {

@@ -31,6 +31,7 @@ function getTextBundle(language) {
       suggestionLabel: 'Suggestion',
       riskLabel: 'Risk',
       confidenceLabel: 'Confidence',
+      unknownConfidenceValue: 'N/A',
       summaryTitle: 'AI Code Review Summary',
       preferredLanguage: 'Preferred language',
       overallAssessment: 'Overall Assessment',
@@ -41,6 +42,7 @@ function getTextBundle(language) {
       fileLevelCoverage: 'File-Level Coverage Notes',
       inlineDowngraded: 'Inline Downgraded Items (processed but not inline)',
       coverageStatus: 'Coverage Status',
+      unknownConfidenceFindings: 'Findings with unknown confidence (N/A)',
       uncoveredList: 'Uncovered list',
       noPatchCoveredList: 'No-patch covered list',
       runtimeBudget: 'Runtime/Budget',
@@ -82,6 +84,7 @@ function getTextBundle(language) {
     suggestionLabel: '建议',
     riskLabel: '风险',
     confidenceLabel: '置信度',
+    unknownConfidenceValue: 'N/A',
     summaryTitle: 'AI 代码审查汇总',
     preferredLanguage: '指定语言',
     overallAssessment: '总体评价',
@@ -92,6 +95,7 @@ function getTextBundle(language) {
     fileLevelCoverage: '文件级覆盖说明',
     inlineDowngraded: '无法 inline 的已处理项',
     coverageStatus: '覆盖状态',
+    unknownConfidenceFindings: '置信度未知（N/A）的问题数',
     uncoveredList: '未覆盖文件清单',
     noPatchCoveredList: '无 patch 文件覆盖清单',
     runtimeBudget: '轮次与预算',
@@ -189,10 +193,10 @@ function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
   }).join(' | ');
 }
 
-function formatConfidenceValue(confidence) {
+function formatConfidenceValue(confidence, unknownValue = 'N/A') {
   const value = Number.parseFloat(String(confidence));
   if (!Number.isFinite(value)) {
-    return '0.80';
+    return unknownValue;
   }
 
   const clamped = Math.min(1, Math.max(0, value));
@@ -214,7 +218,7 @@ function buildInlineBody(finding, text) {
     lines.push(`${text.riskLabel}: ${finding.risk}`);
   }
 
-  lines.push(`${text.confidenceLabel}: ${formatConfidenceValue(finding.confidence)}`);
+  lines.push(`${text.confidenceLabel}: ${formatConfidenceValue(finding.confidence, text.unknownConfidenceValue)}`);
   lines.push(`<div align="right">${text.fromSubAgentTag(subAgent)}</div>`);
   lines.push(`<!-- ai-code-review-agent:inline-key ${inlineKey} -->`);
 
@@ -313,6 +317,9 @@ function formatSummaryMarkdown({
   const degradedText = degradedSummaryOnly
     ? `${text.yes}\n\n${text.reasons}:\n${degradedReasons.map((x) => `- ${x}`).join('\n') || '- unknown'}`
     : text.no;
+  const unknownConfidenceFindings = Number.isFinite(coverage.unknownConfidenceFindings)
+    ? coverage.unknownConfidenceFindings
+    : 0;
 
   return [
     `## ${text.summaryTitle}`,
@@ -346,6 +353,7 @@ function formatSummaryMarkdown({
     `- Covered files: ${coverage.covered}`,
     `- Uncovered files: ${coverage.uncovered}`,
     `- No-patch/binary covered as file-level: ${coverage.noPatch}`,
+    `- ${text.unknownConfidenceFindings}: ${unknownConfidenceFindings}`,
     '',
     `${text.uncoveredList}:`,
     uncoveredLines,
@@ -787,10 +795,13 @@ async function runAction() {
 
   const normalizedFindings = dedupeAndSortFindings(
     normalizeFindings(rawFindings, targetPaths, {
-      minConfidence: config.minFindingConfidence
+      minConfidence: config.minFindingConfidence,
+      missingConfidencePolicy: config.missingConfidencePolicy,
+      fallbackConfidenceValue: config.fallbackConfidenceValue
     }),
     config.maxFindings
   );
+  const unknownConfidenceFindings = normalizedFindings.filter((finding) => !Number.isFinite(finding.confidence)).length;
 
   const diffLineMap = buildDiffLineMaps(patchFiles);
   const inlineComments = [];
@@ -908,7 +919,8 @@ async function runAction() {
     target: filteredFiles.length,
     covered: filteredFiles.length - uncovered.length,
     uncovered: uncovered.length,
-    noPatch: noPatchCovered.length
+    noPatch: noPatchCovered.length,
+    unknownConfidenceFindings
   };
 
   if (filteredFiles.length === 0) {
@@ -960,6 +972,7 @@ async function runAction() {
     const reviewBody = [
       text.reviewCompleted,
       `- Findings kept: ${normalizedFindings.length}`,
+      `- Findings with unknown confidence: ${unknownConfidenceFindings}`,
       `- Inline comments attempted: ${inlineComments.length}`,
       `- Target files: ${coverage.target}`,
       `- Covered files: ${coverage.covered}`,
