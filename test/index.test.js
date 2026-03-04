@@ -60,6 +60,7 @@ test('buildInlineBody includes severity, labels, inline key marker, and sub-agen
     summary: 'The value can be null before property access.',
     suggestion: 'Add a null check before dereference.',
     risk: 'Can throw at runtime.',
+    confidence: 0.93,
     path: 'src/a.js',
     side: 'RIGHT',
     line: 10,
@@ -69,8 +70,10 @@ test('buildInlineBody includes severity, labels, inline key marker, and sub-agen
   assert.match(body, /\*\*\[MEDIUM\] Missing null guard\*\*/);
   assert.match(body, /Suggestion: Add a null check before dereference\./);
   assert.match(body, /Risk: Can throw at runtime\./);
+  assert.match(body, /Confidence: 0.93/);
   assert.match(body, /ai-code-review-agent:inline-key/);
   assert.match(body, /\[From SubAgent: security\]/);
+  assert.ok(body.indexOf('Confidence: 0.93') < body.indexOf('[From SubAgent: security]'));
 });
 
 test('formatSummaryMarkdown supports unknown severities and degraded reasons', () => {

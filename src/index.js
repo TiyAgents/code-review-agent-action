@@ -30,6 +30,7 @@ function getTextBundle(language) {
     return {
       suggestionLabel: 'Suggestion',
       riskLabel: 'Risk',
+      confidenceLabel: 'Confidence',
       summaryTitle: 'AI Code Review Summary',
       preferredLanguage: 'Preferred language',
       overallAssessment: 'Overall Assessment',
@@ -80,6 +81,7 @@ function getTextBundle(language) {
   return {
     suggestionLabel: '建议',
     riskLabel: '风险',
+    confidenceLabel: '置信度',
     summaryTitle: 'AI 代码审查汇总',
     preferredLanguage: '指定语言',
     overallAssessment: '总体评价',
@@ -187,6 +189,16 @@ function summarizePlannerBatchesForLog(batches, maxEntries = 12) {
   }).join(' | ');
 }
 
+function formatConfidenceValue(confidence) {
+  const value = Number.parseFloat(String(confidence));
+  if (!Number.isFinite(value)) {
+    return '0.80';
+  }
+
+  const clamped = Math.min(1, Math.max(0, value));
+  return clamped.toFixed(2);
+}
+
 function buildInlineBody(finding, text) {
   const lines = [];
   const subAgent = String(finding.sourceDimension || 'general').trim().toLowerCase() || 'general';
@@ -202,8 +214,9 @@ function buildInlineBody(finding, text) {
     lines.push(`${text.riskLabel}: ${finding.risk}`);
   }
 
-  lines.push(`<!-- ai-code-review-agent:inline-key ${inlineKey} -->`);
+  lines.push(`${text.confidenceLabel}: ${formatConfidenceValue(finding.confidence)}`);
   lines.push(`<div align="right">${text.fromSubAgentTag(subAgent)}</div>`);
+  lines.push(`<!-- ai-code-review-agent:inline-key ${inlineKey} -->`);
 
   return lines.join('\n\n');
 }
@@ -1026,6 +1039,7 @@ module.exports = {
     shouldUseSummaryOnlyMode,
     sanitizePlannedBatches,
     summarizePlannerBatchesForLog,
+    formatConfidenceValue,
     buildInlineBody,
     summarizeSeverity,
     summarizeFileConclusions,
