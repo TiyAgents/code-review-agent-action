@@ -132,6 +132,17 @@ test('loadConfig accepts fallback_confidence_value boundaries 0 and 1', () => {
   assert.equal(high.fallbackConfidenceValue, 1);
 });
 
+test('loadConfig uses default fallback value when policy is fallback and value is omitted', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    missing_confidence_policy: 'fallback'
+  });
+
+  assert.equal(config.missingConfidencePolicy, 'fallback');
+  assert.equal(config.fallbackConfidenceValue, 0.5);
+});
+
 test('loadConfig normalizes and deduplicates review_dimensions while preserving order', () => {
   const config = loadConfigWithMockedInputs({
     github_token: 'ghs_xxx',

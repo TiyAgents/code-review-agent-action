@@ -225,6 +225,25 @@ function buildInlineBody(finding, text) {
   return lines.join('\n\n');
 }
 
+function buildReviewBody({
+  text,
+  findingsKept,
+  unknownConfidenceFindings,
+  inlineCommentsAttempted,
+  coverage
+}) {
+  return [
+    text.reviewCompleted,
+    `- Findings kept: ${findingsKept}`,
+    `- Findings with unknown confidence: ${unknownConfidenceFindings}`,
+    `- Inline comments attempted: ${inlineCommentsAttempted}`,
+    `- Target files: ${coverage.target}`,
+    `- Covered files: ${coverage.covered}`,
+    `- Uncovered files: ${coverage.uncovered}`,
+    text.reviewSeeSummary
+  ].join('\n');
+}
+
 function summarizeSeverity(groups, text, limitEach = 8) {
   const order = ['critical', 'high', 'medium', 'low'];
   const lines = [];
@@ -969,16 +988,13 @@ async function runAction() {
   );
 
   if (!degradedSummaryOnly) {
-    const reviewBody = [
-      text.reviewCompleted,
-      `- Findings kept: ${normalizedFindings.length}`,
-      `- Findings with unknown confidence: ${unknownConfidenceFindings}`,
-      `- Inline comments attempted: ${inlineComments.length}`,
-      `- Target files: ${coverage.target}`,
-      `- Covered files: ${coverage.covered}`,
-      `- Uncovered files: ${coverage.uncovered}`,
-      text.reviewSeeSummary
-    ].join('\n');
+    const reviewBody = buildReviewBody({
+      text,
+      findingsKept: normalizedFindings.length,
+      unknownConfidenceFindings,
+      inlineCommentsAttempted: inlineComments.length,
+      coverage
+    });
 
     const reviewResult = await createReview(octokit, {
       owner,
@@ -1054,6 +1070,7 @@ module.exports = {
     summarizePlannerBatchesForLog,
     formatConfidenceValue,
     buildInlineBody,
+    buildReviewBody,
     summarizeSeverity,
     summarizeFileConclusions,
     formatSummaryMarkdown

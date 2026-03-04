@@ -10,6 +10,7 @@ const {
   shouldUseSummaryOnlyMode,
   formatConfidenceValue,
   buildInlineBody,
+  buildReviewBody,
   formatSummaryMarkdown
 } = __internal;
 
@@ -88,6 +89,10 @@ test('formatConfidenceValue handles invalid and boundary values predictably', ()
   assert.equal(formatConfidenceValue(-0.1), '0.00');
   assert.equal(formatConfidenceValue(1.2), '1.00');
   assert.equal(formatConfidenceValue('0.345'), '0.34');
+  assert.equal(formatConfidenceValue(0.3449), '0.34');
+  assert.equal(formatConfidenceValue(0.345), '0.34');
+  assert.equal(formatConfidenceValue(0.3451), '0.35');
+  assert.equal(formatConfidenceValue(0.755), '0.76');
   assert.equal(formatConfidenceValue(0), '0.00');
   assert.equal(formatConfidenceValue(1), '1.00');
   assert.equal(formatConfidenceValue(undefined, 'UNKNOWN'), 'UNKNOWN');
@@ -214,4 +219,53 @@ test('formatSummaryMarkdown renders unknown confidence count in zh bundle', () =
 
   assert.match(markdown, /## AI 代码审查汇总/);
   assert.match(markdown, /置信度未知（N\/A）的问题数: 3/);
+});
+
+test('unknown confidence count stays consistent between summary and review body', () => {
+  const text = getTextBundle('English');
+  const coverage = {
+    target: 5,
+    covered: 5,
+    uncovered: 0,
+    noPatch: 0,
+    unknownConfidenceFindings: 2
+  };
+
+  const summary = formatSummaryMarkdown({
+    pull: { number: 9, title: 'Consistency check' },
+    reviewLanguage: 'English',
+    findings: [],
+    fileConclusions: [],
+    actionableSuggestions: [],
+    potentialRisks: [],
+    testSuggestions: [],
+    downgradedInline: [],
+    uncovered: [],
+    noPatchCovered: [],
+    coverage,
+    runtime: {
+      roundsUsed: 1,
+      maxRounds: 3,
+      plannedBatches: 1,
+      executedBatches: 1,
+      subAgentRuns: 1,
+      plannerCalls: 1,
+      reviewerCalls: 1,
+      modelCalls: 2,
+      maxModelCalls: 10
+    },
+    degradedSummaryOnly: false,
+    degradedReasons: []
+  });
+
+  const reviewBody = buildReviewBody({
+    text,
+    findingsKept: 4,
+    unknownConfidenceFindings: 2,
+    inlineCommentsAttempted: 3,
+    coverage
+  });
+
+  assert.match(summary, /Findings with unknown confidence \(N\/A\): 2/);
+  assert.match(reviewBody, /Findings with unknown confidence: 2/);
 });
