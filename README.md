@@ -79,6 +79,8 @@ jobs:
           review_dimensions: general,security,performance,testing
           review_language: English
           min_finding_confidence: 0.72
+          missing_confidence_policy: na
+          fallback_confidence_value: 0.5
           coverage_first_round_primary_only: true
           auto_minimize_outdated_comments: true
           max_rounds: 8
@@ -104,6 +106,8 @@ jobs:
 | `review_dimensions` | no | `general,security,performance,testing` | Subagent dimensions |
 | `review_language` | no | `English` | Preferred language for review comments and summary |
 | `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |
+| `missing_confidence_policy` | no | `na` | Handling for missing/invalid confidence: `drop`, `na`, or `fallback` |
+| `fallback_confidence_value` | no | `0.5` | Fallback confidence used only when `missing_confidence_policy=fallback` |
 | `coverage_first_round_primary_only` | no | `true` | Round 1 runs only primary dimension for faster file coverage |
 | `auto_minimize_outdated_comments` | no | `true` | Best-effort GraphQL minimize for outdated historical inline comments from this action |
 | `max_rounds` | no | `8` | Max planning/review rounds |
@@ -147,6 +151,13 @@ Practical guidance:
 | `target_files` | Number of files in filtered target set |
 | `uncovered_files` | Number of uncovered files |
 | `degraded` | `true` if summary-only degradation was triggered |
+
+## Confidence Semantics
+
+- Finding `confidence` can be `null` when the model cannot confidently estimate a value.
+- Inline comments show unknown values as `N/A`.
+- `min_finding_confidence` is applied only when confidence is numeric.
+- Use `missing_confidence_policy=fallback` if your downstream expects numeric confidence only.
 
 ## Fork PR Notes
 
