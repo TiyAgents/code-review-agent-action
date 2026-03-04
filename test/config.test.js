@@ -106,6 +106,32 @@ test('loadConfig rejects invalid fallback_confidence_value range', () => {
   );
 });
 
+test('loadConfig normalizes missing_confidence_policy casing and whitespace', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    missing_confidence_policy: '  Fallback  '
+  });
+
+  assert.equal(config.missingConfidencePolicy, 'fallback');
+});
+
+test('loadConfig accepts fallback_confidence_value boundaries 0 and 1', () => {
+  const low = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    fallback_confidence_value: '0'
+  });
+  assert.equal(low.fallbackConfidenceValue, 0);
+
+  const high = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    openai_api_key: 'sk-test',
+    fallback_confidence_value: '1'
+  });
+  assert.equal(high.fallbackConfidenceValue, 1);
+});
+
 test('loadConfig normalizes and deduplicates review_dimensions while preserving order', () => {
   const config = loadConfigWithMockedInputs({
     github_token: 'ghs_xxx',

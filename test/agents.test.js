@@ -94,6 +94,95 @@ test('runStructuredWithRepair reports wrapped error after repair failure', async
   assert.match(String(result.error?.message || result.error), /still-invalid/);
 });
 
+test('createReviewerAgent schema accepts nullable/omitted confidence and rejects invalid confidence', () => {
+  const { createReviewerAgent } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const agent = createReviewerAgent({
+    dimension: 'general',
+    model: 'gpt-test',
+    language: 'English',
+    projectGuidance: null
+  });
+
+  const schema = agent.opts.outputType;
+  const parsedOmitted = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'No confidence field',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedOmitted.findings[0].confidence, null);
+
+  const parsedNull = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'Null confidence field',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: null,
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedNull.findings[0].confidence, null);
+
+  const parsedNumeric = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'Numeric confidence',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: 0.9,
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedNumeric.findings[0].confidence, 0.9);
+
+  assert.throws(
+    () => schema.parse({
+      overall: 'ok',
+      findings: [
+        {
+          title: 'String confidence',
+          severity: 'low',
+          path: 'src/a.js',
+          summary: 'desc',
+          confidence: '0.9',
+          evidence: ['e1']
+        }
+      ]
+    }),
+    /Expected number, received string/
+  );
+
+  assert.throws(
+    () => schema.parse({
+      overall: 'ok',
+      findings: [
+        {
+          title: 'Out-of-range confidence',
+          severity: 'low',
+          path: 'src/a.js',
+          summary: 'desc',
+          confidence: 1.2,
+          evidence: ['e1']
+        }
+      ]
+    }),
+    /Number must be less than or equal to 1/
+  );
+});
+
 test('buildBatchReviewInput keeps additional file with truncation at boundary', () => {
   const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
 

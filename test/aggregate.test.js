@@ -151,6 +151,52 @@ test('dedupeAndSortFindings keeps deterministic order on same severity/confidenc
   );
 });
 
+test('dedupeAndSortFindings ranks unknown confidence after numeric values', () => {
+  const findings = [
+    { path: 'a.js', side: 'RIGHT', line: 3, severity: 'medium', title: 'T3', summary: 'S3', confidence: null, evidence: ['3'] },
+    { path: 'a.js', side: 'RIGHT', line: 2, severity: 'medium', title: 'T2', summary: 'S2', confidence: 0, evidence: ['2'] },
+    { path: 'a.js', side: 'RIGHT', line: 1, severity: 'medium', title: 'T1', summary: 'S1', confidence: 0.8, evidence: ['1'] }
+  ];
+
+  const result = dedupeAndSortFindings(findings, 10);
+  assert.deepEqual(result.map((x) => x.line), [1, 2, 3]);
+});
+
+test('dedupeAndSortFindings merge prefers numeric confidence over unknown and updates sourceDimension', () => {
+  const findings = [
+    {
+      path: 'a.js',
+      side: 'RIGHT',
+      line: 7,
+      severity: 'medium',
+      title: 'Issue from unknown confidence',
+      summary: 'Unknown confidence finding',
+      confidence: null,
+      evidence: ['unknown'],
+      fingerprint: 'same_issue',
+      sourceDimension: 'general'
+    },
+    {
+      path: 'a.js',
+      side: 'RIGHT',
+      line: 7,
+      severity: 'medium',
+      title: 'Issue from numeric confidence',
+      summary: 'Numeric confidence finding',
+      confidence: 0.91,
+      evidence: ['numeric'],
+      fingerprint: 'same_issue',
+      sourceDimension: 'security'
+    }
+  ];
+
+  const result = dedupeAndSortFindings(findings, 10);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].confidence, 0.91);
+  assert.equal(result[0].sourceDimension, 'security');
+  assert.equal(result[0].title, 'Issue from numeric confidence');
+});
+
 test('normalizeFindings keeps confidence at threshold and normalizes side/line edge values', () => {
   const allowed = ['src/a.js'];
   const findings = [

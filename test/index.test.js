@@ -75,17 +75,22 @@ test('buildInlineBody includes severity, labels, inline key marker, and sub-agen
   assert.match(body, /ai-code-review-agent:inline-key/);
   assert.match(body, /\[From SubAgent: security\]/);
   assert.ok(body.indexOf('Confidence: 0.93') < body.indexOf('[From SubAgent: security]'));
+  assert.ok(body.indexOf('[From SubAgent: security]') < body.indexOf('ai-code-review-agent:inline-key'));
+  assert.ok(body.trim().endsWith('-->'));
+  assert.equal((body.match(/ai-code-review-agent:inline-key/g) || []).length, 1);
 });
 
 test('formatConfidenceValue handles invalid and boundary values predictably', () => {
   assert.equal(formatConfidenceValue(undefined), 'N/A');
   assert.equal(formatConfidenceValue(null), 'N/A');
+  assert.equal(formatConfidenceValue(''), 'N/A');
   assert.equal(formatConfidenceValue('abc'), 'N/A');
   assert.equal(formatConfidenceValue(-0.1), '0.00');
   assert.equal(formatConfidenceValue(1.2), '1.00');
   assert.equal(formatConfidenceValue('0.345'), '0.34');
   assert.equal(formatConfidenceValue(0), '0.00');
   assert.equal(formatConfidenceValue(1), '1.00');
+  assert.equal(formatConfidenceValue(undefined, 'UNKNOWN'), 'UNKNOWN');
 });
 
 test('buildInlineBody renders chinese confidence label before sub-agent tag', () => {
@@ -122,6 +127,7 @@ test('buildInlineBody renders N/A for missing confidence', () => {
   assert.match(body, /Confidence: N\/A/);
   assert.match(body, /\[From SubAgent: general\]/);
   assert.ok(body.indexOf('Confidence: N/A') < body.indexOf('[From SubAgent: general]'));
+  assert.ok(body.trim().endsWith('-->'));
 });
 
 test('formatSummaryMarkdown supports unknown severities and degraded reasons', () => {
@@ -170,4 +176,42 @@ test('formatSummaryMarkdown supports unknown severities and degraded reasons', (
   assert.match(markdown, /Findings with unknown confidence \(N\/A\): 0/);
   assert.match(markdown, /Structured-output summary-only degradation: YES/);
   assert.match(markdown, /planner_structured_output_failed_round_1: unknown_error/);
+});
+
+test('formatSummaryMarkdown renders unknown confidence count in zh bundle', () => {
+  const markdown = formatSummaryMarkdown({
+    pull: { number: 8, title: '修复边界' },
+    reviewLanguage: 'zh-CN',
+    findings: [],
+    fileConclusions: [],
+    actionableSuggestions: [],
+    potentialRisks: [],
+    testSuggestions: [],
+    downgradedInline: [],
+    uncovered: [],
+    noPatchCovered: [],
+    coverage: {
+      target: 2,
+      covered: 2,
+      uncovered: 0,
+      noPatch: 0,
+      unknownConfidenceFindings: 3
+    },
+    runtime: {
+      roundsUsed: 1,
+      maxRounds: 3,
+      plannedBatches: 1,
+      executedBatches: 1,
+      subAgentRuns: 1,
+      plannerCalls: 1,
+      reviewerCalls: 1,
+      modelCalls: 2,
+      maxModelCalls: 10
+    },
+    degradedSummaryOnly: false,
+    degradedReasons: []
+  });
+
+  assert.match(markdown, /## AI 代码审查汇总/);
+  assert.match(markdown, /置信度未知（N\/A）的问题数: 3/);
 });
