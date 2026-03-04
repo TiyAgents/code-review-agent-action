@@ -158,6 +158,7 @@ Practical guidance:
 - Inline comments show unknown values as `N/A`.
 - `min_finding_confidence` is applied only when confidence is numeric.
 - Use `missing_confidence_policy=fallback` if your downstream expects numeric confidence only.
+- When `missing_confidence_policy` is `drop` or `na`, `fallback_confidence_value` is ignored.
 
 ## Fork PR Notes
 
