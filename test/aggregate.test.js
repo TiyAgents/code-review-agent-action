@@ -303,6 +303,55 @@ test('normalizeFindings applies fallback confidence and min threshold when polic
   assert.equal(dropped.length, 0);
 });
 
+test('normalizeFindings mixed numeric/null confidence follows na policy semantics', () => {
+  const allowed = ['src/a.js'];
+  const findings = [
+    {
+      path: 'src/a.js',
+      title: 'Unknown confidence kept',
+      summary: 'unknown confidence should be kept with na policy',
+      severity: 'LOW',
+      side: 'RIGHT',
+      line: 1,
+      confidence: null,
+      evidence: ['e1']
+    },
+    {
+      path: 'src/a.js',
+      title: 'High numeric confidence kept',
+      summary: 'numeric confidence above threshold should be kept',
+      severity: 'LOW',
+      side: 'RIGHT',
+      line: 2,
+      confidence: 0.9,
+      evidence: ['e2']
+    },
+    {
+      path: 'src/a.js',
+      title: 'Low numeric confidence dropped',
+      summary: 'numeric confidence below threshold should be dropped',
+      severity: 'LOW',
+      side: 'RIGHT',
+      line: 3,
+      confidence: 0.5,
+      evidence: ['e3']
+    }
+  ];
+
+  const normalized = normalizeFindings(findings, allowed, {
+    minConfidence: 0.72,
+    missingConfidencePolicy: 'na'
+  });
+  assert.equal(normalized.length, 2);
+  assert.deepEqual(
+    normalized.map((x) => [x.title, x.confidence]),
+    [
+      ['Unknown confidence kept', null],
+      ['High numeric confidence kept', 0.9]
+    ]
+  );
+});
+
 test('groupFindingsBySeverity falls back unknown severities to medium', () => {
   const unknownSeverityFinding = {
     path: 'src/a.js',
