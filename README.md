@@ -172,6 +172,29 @@ Practical guidance:
 2. Tag a release, for example `v1.0.0`.
 3. Consumers reference: `uses: TiyAgents/code-review-agent-action@v1`.
 
+## Local Schema Support Check
+
+Use this when validating whether a configured model/base URL can follow this project's structured output schema.
+
+1. Create `.env` from `.env.example` and set:
+   - `OPENAI_API_KEY`
+   - `OPENAI_API_BASE` (optional)
+   - `MODEL` (supports `|` to test multiple models, e.g. `model-a|model-b`)
+   - `MAX_OUTPUT_TOKENS` (optional, default `3000`)
+   - `MAX_OUTPUT_TOKENS_RETRY` (optional, default `6000`)
+   - `BUG_PROBE_REQUIRED` (optional, default `false`)
+2. Run:
+
+```bash
+npm run test:schema-support
+```
+
+The script performs planner/reviewer schema checks via the Responses API.
+It also includes a seeded-bug probe (`bug_probe`) to gauge defect detection capability:
+- By default, bug probe is non-blocking (reported as PASS/FAIL).
+- Set `BUG_PROBE_REQUIRED=true` to make bug probe failure exit non-zero.
+- If output is likely truncated by `max_output_tokens`, the script retries once with `MAX_OUTPUT_TOKENS_RETRY`.
+
 ## Implementation Notes
 
 - Trigger support: this action expects `pull_request` event payload.
