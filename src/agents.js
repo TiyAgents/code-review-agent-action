@@ -1,8 +1,5 @@
-const { Agent, run, setDefaultOpenAIClient, setTracingDisabled } = require('@openai/agents');
-const OpenAIImport = require('openai');
 const { z } = require('zod');
-
-const OpenAI = OpenAIImport.default || OpenAIImport;
+const { configureOpenAIClient, runStructuredWithRepair } = require('./model-runtime');
 
 const plannerOutputSchema = z.object({
   batches: z
@@ -52,15 +49,6 @@ const reviewOutputSchema = z.object({
   testSuggestions: z.array(z.string()).default([])
 });
 
-function configureOpenAIClient({ apiKey, baseURL, disableTracing }) {
-  const client = new OpenAI({
-    apiKey,
-    ...(baseURL ? { baseURL } : {})
-  });
-  setDefaultOpenAIClient(client);
-  setTracingDisabled(Boolean(disableTracing));
-}
-
 function buildProjectGuidanceInstructions(projectGuidance) {
   if (!projectGuidance || !projectGuidance.content) {
     return '';
@@ -81,13 +69,41 @@ ${truncatedHint}
 `;
 }
 
+function buildPlannerOutputContractPrompt() {
+  return [
+    'JSON contract:',
+    '- Return exactly one JSON object with only these top-level keys: batches, done, notes.',
+    '- batches is an array of objects with keys: focus, filePaths, reason.',
+    '- Every filePaths value must be a non-empty array of strings.',
+    '- done must be a boolean.',
+    '- notes must be a string.',
+    '- Do not add extra keys.',
+    'Example shape:',
+    '{"batches":[{"focus":"general","filePaths":["src/a.js"],"reason":"short reason"}],"done":false,"notes":""}'
+  ].join('\n');
+}
+
+function buildReviewerOutputContractPrompt() {
+  return [
+    'JSON contract:',
+    '- Return exactly one JSON object with only these top-level keys: overall, findings, fileConclusions, recommendedExtraDimensions, recommendationReason, actionableSuggestions, potentialRisks, testSuggestions.',
+    '- findings is an array of objects with keys: title, severity, category, path, side, line, confidence, evidence, fingerprint, summary, suggestion, risk.',
+    '- severity must be one of critical, high, medium, low.',
+    '- side must be one of LEFT, RIGHT, FILE.',
+    '- line must be a positive integer or null.',
+    '- confidence must be a number in [0,1] or null.',
+    '- evidence, recommendedExtraDimensions, actionableSuggestions, potentialRisks, testSuggestions, risks are arrays of strings.',
+    '- fileConclusions is an array of objects with keys: path, conclusion, risks, testSuggestions, note.',
+    '- Do not add extra keys.',
+    'Example shape:',
+    '{"overall":"short summary","findings":[],"fileConclusions":[{"path":"src/a.js","conclusion":"ok","risks":[],"testSuggestions":[],"note":""}],"recommendedExtraDimensions":[],"recommendationReason":"","actionableSuggestions":[],"potentialRisks":[],"testSuggestions":[]}'
+  ].join('\n');
+}
+
 function createPlannerAgent({ model, projectGuidance }) {
   const guidanceBlock = buildProjectGuidanceInstructions(projectGuidance);
 
-  return new Agent({
-    name: 'Review Planner',
-    model,
-    instructions: `You are the planner/orchestrator for PR code review.
+  const instructions = `You are the planner/orchestrator for PR code review.
 Create batches that drive coverage to 100% over provided pending files.
 Rules:
 - Only include paths from pending files.
@@ -96,9 +112,19 @@ Rules:
 - Prefer balanced batches by file size and risk.
 - Set done=true only when no pending files remain or budget makes further work impossible.
 ${guidanceBlock}
-Output must follow schema exactly.`,
-    outputType: plannerOutputSchema
-  });
+Output must follow the required JSON contract exactly.`;
+
+  return {
+    name: 'Review Planner',
+    model,
+    instructions,
+    schema: plannerOutputSchema,
+    responseName: 'planner_output',
+    outputContractPrompt: buildPlannerOutputContractPrompt(),
+    opts: {
+      outputType: plannerOutputSchema
+    }
+  };
 }
 
 function createReviewerAgent({ dimension, model, language, projectGuidance }) {
@@ -110,10 +136,7 @@ function createReviewerAgent({ dimension, model, language, projectGuidance }) {
   }[dimension] || 'Focus on correctness and practical engineering risks.';
   const guidanceBlock = buildProjectGuidanceInstructions(projectGuidance);
 
-  return new Agent({
-    name: `${dimension} reviewer`,
-    model,
-    instructions: `You are a ${dimension} code review sub-agent.
+  const instructions = `You are a ${dimension} code review sub-agent.
 ${dimensionPrompt}
 Use this language for all natural-language output fields: ${language || 'English'}.
 ${guidanceBlock}
@@ -134,61 +157,19 @@ Rules:
 - Provide file-level conclusions for all files in this batch, including no-risk files.
 - If you are the general reviewer, use recommendedExtraDimensions to request additional specialized review dimensions when needed (for example security/performance/testing), and explain with recommendationReason.
 - If you are not the general reviewer, set recommendedExtraDimensions=[] and recommendationReason="".
-Output must follow schema exactly.`,
-    outputType: reviewOutputSchema
-  });
-}
+Output must follow the required JSON contract exactly.`;
 
-async function runStructuredWithRepair(agent, input, options = {}) {
-  const maxTurns = options.maxTurns || 8;
-  let calls = 0;
-
-  try {
-    calls += 1;
-    const result = await run(agent, input, { maxTurns });
-    if (!result.finalOutput) {
-      throw new Error('Agent returned no structured output.');
+  return {
+    name: `${dimension} reviewer`,
+    model,
+    instructions,
+    schema: reviewOutputSchema,
+    responseName: `${dimension}_review_output`,
+    outputContractPrompt: buildReviewerOutputContractPrompt(),
+    opts: {
+      outputType: reviewOutputSchema
     }
-    return {
-      ok: true,
-      output: result.finalOutput,
-      calls,
-      repaired: false
-    };
-  } catch (firstError) {
-    if (!options.allowRepair) {
-      return {
-        ok: false,
-        error: firstError,
-        calls,
-        repaired: false
-      };
-    }
-
-    const repairInput = `${input}\n\nThe previous attempt failed schema parsing/validation. Re-output strictly valid schema JSON with no extra keys.`;
-
-    try {
-      calls += 1;
-      const repaired = await run(agent, repairInput, { maxTurns });
-      if (!repaired.finalOutput) {
-        throw new Error('Repair attempt returned no structured output.');
-      }
-
-      return {
-        ok: true,
-        output: repaired.finalOutput,
-        calls,
-        repaired: true
-      };
-    } catch (secondError) {
-      return {
-        ok: false,
-        error: new Error(`Structured output failed after repair: ${secondError.message || String(secondError)}`),
-        calls,
-        repaired: true
-      };
-    }
-  }
+  };
 }
 
 function buildPlannerInput({ round, maxRounds, budgetRemaining, maxFilesPerBatch, pendingFiles }) {
@@ -349,5 +330,7 @@ module.exports = {
   createReviewerAgent,
   runStructuredWithRepair,
   buildPlannerInput,
-  buildBatchReviewInput
+  buildBatchReviewInput,
+  plannerOutputSchema,
+  reviewOutputSchema
 };

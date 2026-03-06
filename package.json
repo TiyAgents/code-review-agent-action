@@ -1,8 +1,8 @@
 {
   "name": "ai-code-review-agent-action",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Reusable GitHub Action for AI code review with OpenAI Agents SDK",
+  "description": "Reusable GitHub Action for AI code review with an OpenAI-compatible structured runtime",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -16,7 +16,6 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.1",
-    "@openai/agents": "^0.1.0",
     "minimatch": "^10.1.1",
     "openai": "^6.5.0",
     "zod": "^3.25.76"

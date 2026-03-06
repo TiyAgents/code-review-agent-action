@@ -1,4 +1,5 @@
 const core = require('@actions/core');
+const { COMPATIBILITY_MODES } = require('./model-runtime');
 
 const DEFAULT_SUMMARY_MARKER = 'ai-code-review-agent:summary';
 const DEFAULT_REVIEW_MARKER = 'ai-code-review-agent:review';
@@ -129,6 +130,7 @@ function loadConfig() {
     exclude,
     plannerModel: core.getInput('planner_model') || 'gpt-5.3-codex',
     reviewerModel: core.getInput('reviewer_model') || 'gpt-5.3-codex',
+    llmCompatibilityMode: parseEnumInput('llm_compatibility_mode', 'auto', COMPATIBILITY_MODES),
     reviewDimensions: normalizedDimensions,
     reviewLanguage,
     minFindingConfidence: parseFloatRangeInput('min_finding_confidence', 0.72, 0, 1),

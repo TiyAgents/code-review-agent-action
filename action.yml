@@ -1,6 +1,6 @@
 name: Inline PR Review Agent
 
-description: PR code review action using OpenAI Agents SDK with inline comments and summary updates.
+description: PR code review action using an OpenAI-compatible structured runtime with inline comments and summary updates.
 
 author: TiyAgents Team
 
@@ -38,6 +38,10 @@ inputs:
     description: Reviewer model name.
     required: false
     default: gpt-5.3-codex
+  llm_compatibility_mode:
+    description: Compatibility mode for OpenAI-compatible model APIs (auto|responses_json_schema|chat_json_schema|chat_json_object|prompt_json).
+    required: false
+    default: auto
   review_dimensions:
     description: Comma/newline separated dimensions (general,security,performance,testing).
     required: false

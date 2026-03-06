@@ -493,11 +493,9 @@ async function runAction() {
     configureOpenAIClient({
       apiKey: config.openaiApiKey,
       baseURL: config.openaiApiBase || undefined,
-      disableTracing: Boolean(config.openaiApiBase)
+      compatibilityMode: config.llmCompatibilityMode
     });
-    if (config.openaiApiBase) {
-      core.info('Tracing disabled because custom OPENAI_API_BASE is configured.');
-    }
+    core.info(`LLM compatibility mode: ${config.llmCompatibilityMode}`);
 
     const planner = createPlannerAgent({
       model: config.plannerModel,

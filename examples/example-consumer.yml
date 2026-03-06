@@ -20,7 +20,7 @@ jobs:
 
       - name: Run AI Code Review Action
         if: ${{ env.OPENAI_API_KEY != '' }}
-        uses: TiyAgents/code-review-agent-action@v1
+        uses: TiyAgents/code-review-agent-action@v2
         with:
           # [Required] GitHub token with pull-requests:write and issues:write permissions
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -60,6 +60,10 @@ jobs:
           # [Optional] Sub-agent model; default is gpt-5.3-codex
           # Allowed values: any available model name (string)
           reviewer_model: gpt-5.3-codex
+
+          # [Optional] Compatibility mode for OpenAI-compatible APIs; default is auto
+          # Allowed values: auto, responses_json_schema, chat_json_schema, chat_json_object, prompt_json
+          llm_compatibility_mode: auto
 
           # [Optional] Review dimensions (comma or newline separated);
           # default is general,security,performance,testing

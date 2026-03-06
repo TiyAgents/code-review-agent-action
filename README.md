@@ -1,6 +1,8 @@
 # AI Code Review Agent Action
 
-Reusable GitHub Action for automated Pull Request code review using `@openai/agents` (OpenAI Agents SDK).
+[![Build and Test](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml/badge.svg)](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml)
+
+Reusable GitHub Action for automated Pull Request code review using an OpenAI-compatible structured runtime.
 
 This action:
 - Runs on `pull_request` events.
@@ -33,9 +35,9 @@ Simple flow explanation:
 - Confidence/evidence gating and semantic deduplication to reduce repeated/low-quality findings.
 - Configurable review language via `review_language` (default `English`).
 - Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
+- Automatically falls back across `responses_json_schema`, `chat_json_schema`, `chat_json_object`, and prompt-only JSON modes for broader third-party compatibility.
 - Enforces `openai_api_base` safety: HTTPS only, no URL credentials, and hostname allowlist (default `api.openai.com`).
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
-- Tracing is automatically disabled when `OPENAI_API_BASE` is set (to avoid non-fatal tracing auth errors on custom gateways).
 - General-first routing: batch review starts with `general`, and only `general` can dynamically request extra dimensions for that batch.
 - Security note: when using `openai_api_base`, only point to trusted HTTPS gateways you control (prefer an allowlist); this endpoint receives review context payloads.
 
@@ -76,6 +78,7 @@ jobs:
             **/*.min.js
           planner_model: gpt-5.3-codex
           reviewer_model: gpt-5.3-codex
+          llm_compatibility_mode: auto
           review_dimensions: general,security,performance,testing
           review_language: English
           min_finding_confidence: 0.72
@@ -103,6 +106,7 @@ jobs:
 | `exclude` | no | empty | Exclude globs (comma/newline separated) |
 | `planner_model` | no | `gpt-5.3-codex` | Planner model |
 | `reviewer_model` | no | `gpt-5.3-codex` | Subagent model |
+| `llm_compatibility_mode` | no | `auto` | Structured-output compatibility mode: `auto`, `responses_json_schema`, `chat_json_schema`, `chat_json_object`, or `prompt_json` |
 | `review_dimensions` | no | `general,security,performance,testing` | Subagent dimensions |
 | `review_language` | no | `English` | Preferred language for review comments and summary |
 | `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |
@@ -172,16 +176,15 @@ Practical guidance:
 2. Tag a release, for example `v1.0.0`.
 3. Consumers reference: `uses: TiyAgents/code-review-agent-action@v1`.
 
-## Local Schema Support Check
+## Local Compatibility Check
 
-Use this when validating whether a configured model/base URL can follow this project's structured output schema.
+Use this when validating which structured-output mode a configured model/base URL can successfully follow.
 
 1. Create `.env` from `.env.example` and set:
    - `OPENAI_API_KEY`
    - `OPENAI_API_BASE` (optional)
    - `MODEL` (supports `|` to test multiple models, e.g. `model-a|model-b`)
-   - `MAX_OUTPUT_TOKENS` (optional, default `3000`)
-   - `MAX_OUTPUT_TOKENS_RETRY` (optional, default `6000`)
+   - `COMPATIBILITY_MODES` (optional, `|` or `,` separated; defaults to all explicit modes)
    - `BUG_PROBE_REQUIRED` (optional, default `false`)
 2. Run:
 
@@ -189,11 +192,11 @@ Use this when validating whether a configured model/base URL can follow this pro
 npm run test:schema-support
 ```
 
-The script performs planner/reviewer schema checks via the Responses API.
+The script performs planner/reviewer checks across the supported compatibility modes and reports which mode succeeded.
 It also includes a seeded-bug probe (`bug_probe`) to gauge defect detection capability:
 - By default, bug probe is non-blocking (reported as PASS/FAIL).
 - Set `BUG_PROBE_REQUIRED=true` to make bug probe failure exit non-zero.
-- If output is likely truncated by `max_output_tokens`, the script retries once with `MAX_OUTPUT_TOKENS_RETRY`.
+- For third-party providers, use the reported recommended mode as the safest explicit `llm_compatibility_mode` override.
 
 ## Implementation Notes
 

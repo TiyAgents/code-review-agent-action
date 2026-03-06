@@ -48,6 +48,7 @@ test('loadConfig applies defaults for confidence and coverage-first mode', () =>
   assert.equal(config.fallbackConfidenceValue, 0.5);
   assert.equal(config.coverageFirstRoundPrimaryOnly, true);
   assert.equal(config.autoMinimizeOutdatedComments, true);
+  assert.equal(config.llmCompatibilityMode, 'auto');
   assert.deepEqual(config.openaiApiBaseAllowlist, ['api.openai.com']);
 });
 
@@ -60,6 +61,7 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
     fallback_confidence_value: '0.65',
     coverage_first_round_primary_only: 'false',
     auto_minimize_outdated_comments: 'false',
+    llm_compatibility_mode: 'chat_json_object',
     openai_api_base: 'https://gateway.example.com/v1',
     openai_api_base_allowlist: 'api.openai.com, gateway.example.com'
   });
@@ -69,8 +71,20 @@ test('loadConfig parses custom confidence and coverage-first mode', () => {
   assert.equal(config.fallbackConfidenceValue, 0.65);
   assert.equal(config.coverageFirstRoundPrimaryOnly, false);
   assert.equal(config.autoMinimizeOutdatedComments, false);
+  assert.equal(config.llmCompatibilityMode, 'chat_json_object');
   assert.equal(config.openaiApiBase, 'https://gateway.example.com/v1');
   assert.deepEqual(config.openaiApiBaseAllowlist, ['api.openai.com', 'gateway.example.com']);
+});
+
+test('loadConfig rejects invalid llm_compatibility_mode', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      openai_api_key: 'sk-test',
+      llm_compatibility_mode: 'legacy'
+    }),
+    /llm_compatibility_mode must be one of/
+  );
 });
 
 test('loadConfig rejects invalid confidence range', () => {

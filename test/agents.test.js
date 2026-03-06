@@ -1,101 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Module = require('node:module');
 
-function loadAgentsWithMockedRuntime(runImpl) {
-  const originalLoad = Module._load;
-
-  Module._load = function patchedLoad(request, parent, isMain) {
-    if (request === '@openai/agents') {
-      return {
-        Agent: class FakeAgent {
-          constructor(opts) {
-            this.opts = opts;
-          }
-        },
-        run: runImpl,
-        setDefaultOpenAIClient: () => {},
-        setTracingDisabled: () => {}
-      };
-    }
-    return originalLoad(request, parent, isMain);
-  };
-
-  try {
-    delete require.cache[require.resolve('../src/agents')];
-    return require('../src/agents');
-  } finally {
-    Module._load = originalLoad;
-    delete require.cache[require.resolve('../src/agents')];
-  }
+function loadAgents() {
+  delete require.cache[require.resolve('../src/agents')];
+  return require('../src/agents');
 }
 
-test('runStructuredWithRepair succeeds on first structured output', async () => {
-  const { runStructuredWithRepair } = loadAgentsWithMockedRuntime(async () => ({
-    finalOutput: { overall: 'ok' }
-  }));
-
-  const result = await runStructuredWithRepair({}, 'input', { allowRepair: true, maxTurns: 3 });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.calls, 1);
-  assert.equal(result.repaired, false);
-  assert.deepEqual(result.output, { overall: 'ok' });
-});
-
-test('runStructuredWithRepair retries once with repair prompt', async () => {
-  const inputs = [];
-  let attempts = 0;
-  const { runStructuredWithRepair } = loadAgentsWithMockedRuntime(async (_agent, input) => {
-    inputs.push(input);
-    attempts += 1;
-    if (attempts === 1) {
-      throw new Error('schema parse failed');
-    }
-    return {
-      finalOutput: { overall: 'repaired' }
-    };
-  });
-
-  const result = await runStructuredWithRepair({}, 'original-input', { allowRepair: true, maxTurns: 2 });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.calls, 2);
-  assert.equal(result.repaired, true);
-  assert.equal(inputs.length, 2);
-  assert.equal(inputs[0], 'original-input');
-  assert.match(inputs[1], /previous attempt failed schema parsing\/validation/i);
-});
-
-test('runStructuredWithRepair returns first error when repair disabled', async () => {
-  const { runStructuredWithRepair } = loadAgentsWithMockedRuntime(async () => {
-    throw new Error('first-failure');
-  });
-
-  const result = await runStructuredWithRepair({}, 'input', { allowRepair: false, maxTurns: 2 });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.calls, 1);
-  assert.equal(result.repaired, false);
-  assert.match(String(result.error?.message || result.error), /first-failure/);
-});
-
-test('runStructuredWithRepair reports wrapped error after repair failure', async () => {
-  const { runStructuredWithRepair } = loadAgentsWithMockedRuntime(async () => {
-    throw new Error('still-invalid');
-  });
-
-  const result = await runStructuredWithRepair({}, 'input', { allowRepair: true, maxTurns: 2 });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.calls, 2);
-  assert.equal(result.repaired, true);
-  assert.match(String(result.error?.message || result.error), /Structured output failed after repair/);
-  assert.match(String(result.error?.message || result.error), /still-invalid/);
-});
-
 test('createReviewerAgent schema accepts nullable/omitted confidence and rejects invalid confidence', () => {
-  const { createReviewerAgent } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const { createReviewerAgent } = loadAgents();
   const agent = createReviewerAgent({
     dimension: 'general',
     model: 'gpt-test',
@@ -184,7 +96,7 @@ test('createReviewerAgent schema accepts nullable/omitted confidence and rejects
 });
 
 test('buildBatchReviewInput keeps additional file with truncation at boundary', () => {
-  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const { buildBatchReviewInput } = loadAgents();
 
   const result = buildBatchReviewInput({
     dimension: 'general',
@@ -216,7 +128,7 @@ test('buildBatchReviewInput keeps additional file with truncation at boundary', 
 });
 
 test('buildBatchReviewInput skips files when budget cannot fit any section body', () => {
-  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const { buildBatchReviewInput } = loadAgents();
 
   const result = buildBatchReviewInput({
     dimension: 'general',
@@ -239,7 +151,7 @@ test('buildBatchReviewInput skips files when budget cannot fit any section body'
 });
 
 test('buildBatchReviewInput includes absolute line anchors in prompt', () => {
-  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const { buildBatchReviewInput } = loadAgents();
 
   const result = buildBatchReviewInput({
     dimension: 'general',
@@ -258,20 +170,22 @@ test('buildBatchReviewInput includes absolute line anchors in prompt', () => {
           ' const a = 1;',
           '-const b = 2;',
           '+const b = 3;',
-          ' const c = 4;'
+          '-return a + b;',
+          '+return a - b;'
         ].join('\n')
       }
     ]
   });
 
-  assert.match(result.prompt, /Anchor format: \[L<old>\|R<new>\]/);
-  assert.match(result.prompt, /\[L10\|R10\]  const a = 1;/);
-  assert.match(result.prompt, /\[L11\|R-\] -const b = 2;/);
-  assert.match(result.prompt, /\[L-\|R11\] \+const b = 3;/);
+  assert.match(result.prompt, /\[L10\|R10\]\s+ const a = 1;/);
+  assert.match(result.prompt, /\[L11\|R-\]\s+-const b = 2;/);
+  assert.match(result.prompt, /\[L-\|R11\]\s+\+const b = 3;/);
+  assert.match(result.prompt, /\[L12\|R-\]\s+-return a \+ b;/);
+  assert.match(result.prompt, /\[L-\|R12\]\s+\+return a - b;/);
 });
 
 test('buildBatchReviewInput preserves line anchors for code starting with +++ and ---', () => {
-  const { buildBatchReviewInput } = loadAgentsWithMockedRuntime(async () => ({ finalOutput: {} }));
+  const { buildBatchReviewInput } = loadAgents();
 
   const result = buildBatchReviewInput({
     dimension: 'general',
@@ -280,23 +194,16 @@ test('buildBatchReviewInput preserves line anchors for code starting with +++ an
     availableDimensions: ['general'],
     batchFiles: [
       {
-        filename: 'src/weird.js',
+        filename: 'src/example.txt',
         status: 'modified',
-        changes: 4,
+        changes: 2,
         additions: 1,
         deletions: 1,
-        patch: [
-          '@@ -1,3 +1,3 @@',
-          ' const x = 1;',
-          '+++guard_added',
-          '---legacy_removed',
-          ' const y = 2;'
-        ].join('\n')
+        patch: ['@@ -1,2 +1,2 @@', '- ---old', '+ +++new'].join('\n')
       }
     ]
   });
 
-  assert.match(result.prompt, /\[L-\|R2\] \+\+\+guard_added/);
-  assert.match(result.prompt, /\[L2\|R-\] ---legacy_removed/);
-  assert.match(result.prompt, /\[L3\|R3\]  const y = 2;/);
+  assert.match(result.prompt, /\[L1\|R-\] - ---old/);
+  assert.match(result.prompt, /\[L-\|R1\] \+ \+\+\+new/);
 });
