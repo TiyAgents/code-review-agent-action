@@ -1,4 +1,4 @@
-name: Self Test Current Branch Action
+name: Test
 
 on:
   pull_request:
