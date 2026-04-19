@@ -925,7 +925,7 @@ async function runAction() {
       }
 
       const batchPromises = batchesToRun.map((batch, batchIndex) =>
-        semaphore.run(() => executeBatch({
+        executeBatch({
           batch,
           batchIndex,
           batchCount,
@@ -936,7 +936,7 @@ async function runAction() {
           config,
           projectGuidance,
           semaphore
-        }))
+        })
       );
 
       const batchSettled = await Promise.allSettled(batchPromises);
@@ -945,6 +945,7 @@ async function runAction() {
       for (let i = 0; i < batchSettled.length; i += 1) {
         const outcome = batchSettled[i];
         if (outcome.status === 'rejected') {
+          hadStructuredOutputFailure = true;
           core.warning(`Round ${round} Batch ${i + 1}: unexpected error: ${getErrorMessage(outcome.reason)}`);
           continue;
         }

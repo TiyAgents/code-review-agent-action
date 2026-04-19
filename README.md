@@ -2,12 +2,12 @@
 
 [![Build and Test](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml/badge.svg)](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml)
 
-Reusable GitHub Action for automated Pull Request code review using an OpenAI-compatible structured runtime.
+Reusable GitHub Action for automated Pull Request code review with multi-provider AI support (OpenAI, Anthropic, Google, Mistral, OpenAI-compatible) via [AI SDK](https://sdk.vercel.ai/).
 
 This action:
 - Runs on `pull_request` events.
 - Reviews all changed files that match `include`/`exclude` filters.
-- Uses planner + subagents (general/security/performance/testing) in multi-round batches for large diffs.
+- Uses planner + subagents (general/security/performance/testing) in multi-round batches for large diffs, with **parallel batch and dimension execution** within each round.
 - Publishes:
   - one PR Review (`pulls.createReview`) with inline comments (`LEFT`/`RIGHT`), and
   - one updatable summary issue comment (marker-based, no spam).
@@ -20,11 +20,14 @@ This action:
 Simple flow explanation:
 - `Planner` decides each round's batches under `max_rounds`, `max_model_calls`, and `max_files_per_batch`.
 - `SubAgent(general)` always runs first for each batch, and can dynamically request extra dimensions (`security/performance/testing`).
+- Within each round, batches execute in parallel (controlled by `max_concurrency`); within each batch, remaining dimensions run in parallel after `general` completes.
 - All sub-agent outputs are aggregated, normalized, deduplicated, then mapped to inline-commentable diff lines.
 - The publisher writes one review + one updatable summary, with historical dedupe and best-effort outdated comment minimization.
 
 ## Features
 
+- **Multi-provider AI support**: OpenAI, Anthropic, Google, Mistral, and OpenAI-compatible endpoints via AI SDK.
+- **Parallel execution**: batches and dimensions within each round run concurrently, controlled by `max_concurrency` (default 4). Set `max_concurrency=1` for serial execution.
 - Full coverage target over filtered file set, including no-patch/binary files as file-level review entries.
 - Structured schema output validation with one repair retry.
 - Degradation mode: if structured output still fails after repair, posts summary-only with explicit reason.
@@ -34,8 +37,6 @@ Simple flow explanation:
   - Stage 2: auto-minimize outdated historical inline comments (GraphQL best-effort).
 - Confidence/evidence gating and semantic deduplication to reduce repeated/low-quality findings.
 - Configurable review language via `review_language` (default `English`).
-- Supports custom OpenAI base URL via `OPENAI_API_BASE` or `openai_api_base` input.
-- Automatically falls back across `responses_json_schema`, `chat_json_schema`, `chat_json_object`, and prompt-only JSON modes for broader third-party compatibility.
 - Enforces `openai_api_base` safety: HTTPS only, no URL credentials, and hostname allowlist (default `api.openai.com`).
 - Automatically loads project guidance from `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` (priority order) and passes it to review agents.
 - General-first routing: batch review starts with `general`, and only `general` can dynamically request extra dimensions for that batch.
@@ -87,6 +88,7 @@ jobs:
           coverage_first_round_primary_only: true
           auto_minimize_outdated_comments: true
           max_rounds: 8
+          max_concurrency: 4
           max_model_calls: 128 # example override (default: 40)
           max_files_per_batch: 8
           max_context_chars: 256000 # example override (default: 128000)
@@ -110,7 +112,6 @@ jobs:
 | `exclude` | no | empty | Exclude globs (comma/newline separated) |
 | `planner_model` | no | `gpt-5.3-codex` | Planner model |
 | `reviewer_model` | no | `gpt-5.3-codex` | Subagent model |
-| `llm_compatibility_mode` | no | `auto` | **Deprecated**: AI SDK handles compatibility automatically |
 | `review_dimensions` | no | `general,security,performance,testing` | Subagent dimensions |
 | `review_language` | no | `English` | Preferred language for review comments and summary |
 | `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |
@@ -119,6 +120,7 @@ jobs:
 | `coverage_first_round_primary_only` | no | `true` | Round 1 runs only primary dimension for faster file coverage |
 | `auto_minimize_outdated_comments` | no | `true` | Best-effort GraphQL minimize for outdated historical inline comments from this action |
 | `max_rounds` | no | `8` | Max planning/review rounds |
+| `max_concurrency` | no | `4` | Max concurrent API calls within a round (batch + dimension parallelism) |
 | `max_model_calls` | no | `40` | Hard cap for model calls |
 | `max_files_per_batch` | no | `8` | Batch size cap |
 | `max_context_chars` | no | `128000` | Per-batch context cap |
@@ -127,7 +129,7 @@ jobs:
 
 ## Budget Sizing (Rough Estimate)
 
-This action spends model calls by **rounds × batches × dimensions**.
+This action spends model calls by **rounds × batches × dimensions**. With parallel execution (`max_concurrency > 1`), wall-clock time decreases but total call count stays the same.
 
 Approximation:
 
@@ -200,7 +202,6 @@ The script performs planner/reviewer checks across the supported compatibility m
 It also includes a seeded-bug probe (`bug_probe`) to gauge defect detection capability:
 - By default, bug probe is non-blocking (reported as PASS/FAIL).
 - Set `BUG_PROBE_REQUIRED=true` to make bug probe failure exit non-zero.
-- For third-party providers, use the reported recommended mode as the safest explicit `llm_compatibility_mode` override.
 
 ## Implementation Notes
 
