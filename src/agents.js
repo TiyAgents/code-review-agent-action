@@ -127,7 +127,7 @@ Output must follow the required JSON contract exactly.`;
   };
 }
 
-function createReviewerAgent({ dimension, model, language, projectGuidance }) {
+function createReviewerAgent({ dimension, model, modelInstance, language, projectGuidance }) {
   const dimensionPrompt = {
     general: 'Focus on correctness, maintainability, edge cases, and regressions.',
     security: 'Focus on vulnerabilities, authn/authz, injection, secrets, unsafe deserialization, SSRF, path traversal, and supply chain risk.',
@@ -162,6 +162,7 @@ Output must follow the required JSON contract exactly.`;
   return {
     name: `${dimension} reviewer`,
     model,
+    modelInstance: modelInstance || null,
     instructions,
     schema: reviewOutputSchema,
     responseName: `${dimension}_review_output`,
