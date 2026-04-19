@@ -258,3 +258,16 @@ test('loadConfig requires api key from any source', () => {
     /Missing API key/
   );
 });
+
+test('loadConfig rejects api_base when allowlist resolves to empty after normalization', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      api_key: 'sk-test',
+      api_base: 'https://gateway.example.com/v1',
+      api_base_allowlist: '  ,  ',
+      openai_api_base_allowlist: ''
+    }),
+    /allowlist is empty/
+  );
+});

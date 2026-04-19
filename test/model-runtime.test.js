@@ -182,6 +182,38 @@ test('extractJsonObjectText extracts JSON from mixed text', () => {
   assert.equal(runtime.extractJsonObjectText(input), '{"overall":"test"}');
 });
 
+test('requestStructuredOutput uses agent.modelInstance when provided', async () => {
+  const customModel = { modelId: 'custom-reviewer', provider: 'test' };
+  let usedModel = null;
+  const runtime = loadRuntimeWithMockedAI(async (opts) => {
+    usedModel = opts.model;
+    return { output: { overall: 'from custom' }, text: '{}' };
+  });
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = { ...createAgent(), modelInstance: customModel };
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.equal(usedModel, customModel);
+});
+
+test('requestStructuredOutput falls back to runtimeState.model when agent.modelInstance is null', async () => {
+  const defaultModel = createFakeModel();
+  let usedModel = null;
+  const runtime = loadRuntimeWithMockedAI(async (opts) => {
+    usedModel = opts.model;
+    return { output: { overall: 'from default' }, text: '{}' };
+  });
+
+  runtime.configureRuntime({ model: defaultModel });
+  const agent = { ...createAgent(), modelInstance: null };
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.equal(usedModel, defaultModel);
+});
+
 test('schema validation failure on first attempt triggers repair', async () => {
   let callCount = 0;
   const runtime = loadRuntimeWithMockedAI(async () => {
