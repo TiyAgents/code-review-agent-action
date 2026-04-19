@@ -8,6 +8,7 @@ const {
   chunk,
   sanitizePlannedBatches,
   shouldUseSummaryOnlyMode,
+  createSemaphore,
   formatConfidenceValue,
   buildInlineBody,
   buildReviewBody,
@@ -268,4 +269,69 @@ test('unknown confidence count stays consistent between summary and review body'
 
   assert.match(summary, /Findings with unknown confidence \(N\/A\): 2/);
   assert.match(reviewBody, /Findings with unknown confidence: 2/);
+});
+
+// --- createSemaphore tests ---
+
+test('createSemaphore limits concurrency', async () => {
+  const sem = createSemaphore(2);
+  let active = 0;
+  let maxActive = 0;
+
+  const task = () => sem.run(async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 20));
+    active -= 1;
+  });
+
+  await Promise.all([task(), task(), task(), task(), task()]);
+  assert.equal(maxActive, 2);
+  assert.equal(active, 0);
+});
+
+test('createSemaphore with concurrency=1 runs sequentially', async () => {
+  const sem = createSemaphore(1);
+  let active = 0;
+  let maxActive = 0;
+
+  const task = () => sem.run(async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 10));
+    active -= 1;
+  });
+
+  await Promise.all([task(), task(), task()]);
+  assert.equal(maxActive, 1);
+});
+
+test('createSemaphore propagates errors without blocking others', async () => {
+  const sem = createSemaphore(2);
+  const results = [];
+
+  const tasks = [
+    sem.run(async () => { results.push('a'); return 'a'; }),
+    sem.run(async () => { throw new Error('boom'); }),
+    sem.run(async () => { results.push('c'); return 'c'; })
+  ];
+
+  const settled = await Promise.allSettled(tasks);
+  assert.equal(settled[0].status, 'fulfilled');
+  assert.equal(settled[0].value, 'a');
+  assert.equal(settled[1].status, 'rejected');
+  assert.equal(settled[1].reason.message, 'boom');
+  assert.equal(settled[2].status, 'fulfilled');
+  assert.equal(settled[2].value, 'c');
+  assert.deepEqual(results, ['a', 'c']);
+});
+
+test('createSemaphore returns values from async functions', async () => {
+  const sem = createSemaphore(3);
+  const results = await Promise.all([
+    sem.run(async () => 1),
+    sem.run(async () => 2),
+    sem.run(async () => 3)
+  ]);
+  assert.deepEqual(results, [1, 2, 3]);
 });

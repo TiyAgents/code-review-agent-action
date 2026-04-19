@@ -83,6 +83,10 @@ inputs:
     description: Auto-minimize outdated historical inline comments posted by this action.
     required: false
     default: "true"
+  max_concurrency:
+    description: Maximum concurrent API calls within a single round (controls batch and dimension parallelism).
+    required: false
+    default: "4"
   max_rounds:
     description: Maximum planning/review rounds.
     required: false
