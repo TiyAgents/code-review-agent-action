@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { configureOpenAIClient, runStructuredWithRepair } = require('./model-runtime');
+const { configureRuntime, runStructuredWithRepair } = require('./model-runtime');
 
 const plannerOutputSchema = z.object({
   batches: z
@@ -325,7 +325,7 @@ function buildBatchReviewInput({ dimension, round, batchFiles, maxContextChars, 
 }
 
 module.exports = {
-  configureOpenAIClient,
+  configureRuntime,
   createPlannerAgent,
   createReviewerAgent,
   runStructuredWithRepair,

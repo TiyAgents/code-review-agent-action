@@ -2,16 +2,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 const { z } = require('zod');
-const { zodTextFormat } = require('openai/helpers/zod');
 
-function loadRuntimeWithMockedOpenAI(clientFactory) {
+function loadRuntimeWithMockedAI(generateTextMock) {
   const originalLoad = Module._load;
 
   Module._load = function patchedLoad(request, parent, isMain) {
-    if (request === 'openai') {
-      return class FakeOpenAI {
-        constructor() {
-          return clientFactory();
+    if (request === 'ai') {
+      return {
+        generateText: generateTextMock,
+        Output: {
+          object: ({ schema }) => ({ type: 'object', schema })
         }
       };
     }
@@ -37,152 +37,167 @@ function createAgent() {
   };
 }
 
-test('runStructuredWithRepair falls back to chat_json_object and caches the successful mode', async () => {
-  let responseCalls = 0;
-  let chatCalls = 0;
-  const runtime = loadRuntimeWithMockedOpenAI(() => ({
-    responses: {
-      create: async () => {
-        responseCalls += 1;
-        throw new Error('text.format is not supported by this provider');
-      }
-    },
-    chat: {
-      completions: {
-        create: async (requestData) => {
-          chatCalls += 1;
-          if (requestData.response_format?.type === 'json_schema') {
-            throw new Error('response_format json_schema not supported');
-          }
-          return {
-            choices: [
-              {
-                message: {
-                  content: '{"overall":"ok"}'
-                }
-              }
-            ]
-          };
-        }
-      }
-    }
+function createFakeModel() {
+  return { modelId: 'test-model', provider: 'test' };
+}
+
+test('runStructuredWithRepair returns parsed output on success', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: { overall: 'looks good' },
+    text: '{"overall":"looks good"}'
   }));
 
-  runtime.configureOpenAIClient({ apiKey: 'sk-test', compatibilityMode: 'auto' });
+  runtime.configureRuntime({ model: createFakeModel() });
   const agent = createAgent();
-
-  const first = await runtime.runStructuredWithRepair(agent, 'input', { allowRepair: true });
-  const second = await runtime.runStructuredWithRepair(agent, 'input', { allowRepair: true });
-
-  assert.equal(first.ok, true);
-  assert.equal(first.mode, 'chat_json_object');
-  assert.equal(first.calls, 3);
-  assert.equal(second.ok, true);
-  assert.equal(second.mode, 'chat_json_object');
-  assert.equal(second.calls, 1);
-  assert.equal(responseCalls, 1);
-  assert.equal(chatCalls, 3);
-});
-
-test('runStructuredWithRepair repairs invalid json in the same mode before failing over', async () => {
-  const requests = [];
-  let attempts = 0;
-  const runtime = loadRuntimeWithMockedOpenAI(() => ({
-    responses: {
-      create: async () => {
-        throw new Error('text.format is not supported by this provider');
-      }
-    },
-    chat: {
-      completions: {
-        create: async (requestData) => {
-          requests.push(requestData);
-          attempts += 1;
-          if (requestData.response_format?.type === 'json_schema') {
-            throw new Error('response_format json_schema not supported');
-          }
-          if (attempts === 2) {
-            return {
-              choices: [
-                {
-                  message: {
-                    content: 'not-json'
-                  }
-                }
-              ]
-            };
-          }
-          return {
-            choices: [
-              {
-                message: {
-                  content: '{"overall":"repaired"}'
-                }
-              }
-            ]
-          };
-        }
-      }
-    }
-  }));
-
-  runtime.configureOpenAIClient({ apiKey: 'sk-test', compatibilityMode: 'auto' });
-
-  const result = await runtime.runStructuredWithRepair(createAgent(), 'original-input', { allowRepair: true });
+  const result = await runtime.runStructuredWithRepair(agent, 'review this code');
 
   assert.equal(result.ok, true);
-  assert.equal(result.mode, 'chat_json_object');
-  assert.equal(result.calls, 4);
-  assert.equal(result.repaired, true);
-  assert.equal(requests[2].messages[1].content.includes('Validation error:'), true);
-  assert.equal(requests[2].messages[1].content.includes('Previous output preview:'), true);
+  assert.deepEqual(result.output, { overall: 'looks good' });
+  assert.equal(result.calls, 1);
+  assert.equal(result.repaired, false);
 });
 
-test('prompt_json mode inlines system instructions into the user message', async () => {
-  const captured = [];
-  const runtime = loadRuntimeWithMockedOpenAI(() => ({
-    responses: { create: async () => ({}) },
-    chat: {
-      completions: {
-        create: async (requestData) => {
-          captured.push(requestData);
-          return {
-            choices: [
-              {
-                message: {
-                  content: '{"overall":"ok"}'
-                }
-              }
-            ]
-          };
-        }
-      }
-    }
+test('runStructuredWithRepair falls back to text parsing when output is null', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: null,
+    text: '{"overall":"from text"}'
   }));
 
-  runtime.configureOpenAIClient({ apiKey: 'sk-test', compatibilityMode: 'prompt_json', baseURL: 'https://gateway.example.com/v1' });
-  const result = await runtime.runStructuredWithRepair(createAgent(), 'review this diff', { allowRepair: true });
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
 
   assert.equal(result.ok, true);
-  assert.equal(captured.length, 1);
-  assert.equal(captured[0].messages.length, 1);
-  assert.equal(captured[0].messages[0].role, 'user');
-  assert.match(captured[0].messages[0].content, /Follow these task instructions exactly/);
-  assert.match(captured[0].messages[0].content, /System instructions/);
-  assert.match(captured[0].messages[0].content, /JSON contract here/);
+  assert.deepEqual(result.output, { overall: 'from text' });
+  assert.equal(result.calls, 1);
 });
 
-test('sanitizeJsonSchema rewrites integer exclusiveMinimum for claude-compatible providers', () => {
-  const runtime = loadRuntimeWithMockedOpenAI(() => ({ responses: {}, chat: { completions: {} } }));
-  const schema = z.object({
-    line: z.number().int().positive().nullable().default(null)
+test('runStructuredWithRepair triggers repair on first failure and succeeds', async () => {
+  let callCount = 0;
+  const runtime = loadRuntimeWithMockedAI(async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return { output: null, text: 'not json' };
+    }
+    return { output: { overall: 'repaired' }, text: '{"overall":"repaired"}' };
   });
-  const raw = zodTextFormat(schema, 'test_output');
-  const sanitized = runtime.sanitizeJsonSchema(raw.schema);
 
-  const integerNode = sanitized.properties.line.anyOf.find((item) => item.type === 'integer');
-  assert.equal(integerNode.minimum, 1);
-  assert.equal('exclusiveMinimum' in integerNode, false);
-  assert.equal('$schema' in sanitized, false);
-  assert.equal('default' in sanitized.properties.line, false);
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.output, { overall: 'repaired' });
+  assert.equal(result.calls, 2);
+  assert.equal(result.repaired, true);
+});
+
+test('runStructuredWithRepair returns error when both attempts fail', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: null,
+    text: 'garbage'
+  }));
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, false);
+  assert.ok(result.error);
+  assert.equal(result.calls, 2);
+  assert.equal(result.repaired, true);
+});
+
+test('runStructuredWithRepair skips repair when allowRepair=false', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: null,
+    text: 'garbage'
+  }));
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review', { allowRepair: false });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.calls, 1);
+  assert.equal(result.repaired, false);
+});
+
+test('runStructuredWithRepair handles empty output text', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: null,
+    text: ''
+  }));
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review', { allowRepair: false });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.error.message.includes('empty output'));
+});
+
+test('runStructuredWithRepair handles generateText throwing', async () => {
+  let callCount = 0;
+  const runtime = loadRuntimeWithMockedAI(async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      throw new Error('API rate limit exceeded');
+    }
+    return { output: { overall: 'recovered' }, text: '{"overall":"recovered"}' };
+  });
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.output, { overall: 'recovered' });
+  assert.equal(result.repaired, true);
+});
+
+test('configureRuntime throws when model is falsy', () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({}));
+  assert.throws(() => runtime.configureRuntime({ model: null }), /valid AI SDK model/);
+});
+
+test('runStructuredWithRepair throws when runtime not configured', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({}));
+  const agent = createAgent();
+  await assert.rejects(
+    () => runtime.runStructuredWithRepair(agent, 'review'),
+    /not configured/
+  );
+});
+
+test('extractJsonObjectText extracts JSON from code fences', () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({}));
+  const input = '```json\n{"overall":"test"}\n```';
+  assert.equal(runtime.extractJsonObjectText(input), '{"overall":"test"}');
+});
+
+test('extractJsonObjectText extracts JSON from mixed text', () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({}));
+  const input = 'Here is the result: {"overall":"test"} done.';
+  assert.equal(runtime.extractJsonObjectText(input), '{"overall":"test"}');
+});
+
+test('schema validation failure on first attempt triggers repair', async () => {
+  let callCount = 0;
+  const runtime = loadRuntimeWithMockedAI(async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Returns valid JSON but fails schema validation (missing required field)
+      return { output: null, text: '{"wrong_field":"value"}' };
+    }
+    return { output: { overall: 'valid' }, text: '{"overall":"valid"}' };
+  });
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.output, { overall: 'valid' });
+  assert.equal(result.repaired, true);
 });

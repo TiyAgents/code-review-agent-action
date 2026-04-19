@@ -60,12 +60,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: AI Code Review
-        uses: TiyAgents/code-review-agent-action@v2
+        uses: TiyAgents/code-review-agent-action@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          openai_api_base: ${{ vars.OPENAI_API_BASE }}
-          openai_api_base_allowlist: |
+          ai_provider: openai
+          api_key: ${{ secrets.OPENAI_API_KEY }}
+          api_base: ${{ vars.OPENAI_API_BASE }}
+          api_base_allowlist: |
             api.openai.com
             your-gateway.example.com
           include: |
@@ -78,7 +79,6 @@ jobs:
             **/*.min.js
           planner_model: gpt-5.3-codex
           reviewer_model: gpt-5.3-codex
-          llm_compatibility_mode: auto
           review_dimensions: general,security,performance,testing
           review_language: English
           min_finding_confidence: 0.72
@@ -99,14 +99,18 @@ jobs:
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
 | `github_token` | yes | - | GitHub token with review/comment write permissions |
-| `openai_api_key` | no | env `OPENAI_API_KEY` | OpenAI API key |
-| `openai_api_base` | no | env `OPENAI_API_BASE` | Optional custom OpenAI-compatible base URL |
-| `openai_api_base_allowlist` | no | `api.openai.com` | Allowed hostnames for `openai_api_base` (HTTPS only) |
+| `ai_provider` | no | `openai` | AI provider type: `openai`, `anthropic`, `google`, `mistral`, or `openai-compatible` |
+| `api_key` | no | env `OPENAI_API_KEY` | API key for the selected AI provider |
+| `api_base` | no | env `OPENAI_API_BASE` | Optional base URL for the AI provider API endpoint |
+| `api_base_allowlist` | no | `api.openai.com` | Allowed hostnames for `api_base` (HTTPS only) |
+| `openai_api_key` | no | - | **Deprecated**: use `api_key` |
+| `openai_api_base` | no | - | **Deprecated**: use `api_base` |
+| `openai_api_base_allowlist` | no | - | **Deprecated**: use `api_base_allowlist` |
 | `include` | no | `**` | Include globs (comma/newline separated) |
 | `exclude` | no | empty | Exclude globs (comma/newline separated) |
 | `planner_model` | no | `gpt-5.3-codex` | Planner model |
 | `reviewer_model` | no | `gpt-5.3-codex` | Subagent model |
-| `llm_compatibility_mode` | no | `auto` | Structured-output compatibility mode: `auto`, `responses_json_schema`, `chat_json_schema`, `chat_json_object`, or `prompt_json` |
+| `llm_compatibility_mode` | no | `auto` | **Deprecated**: AI SDK handles compatibility automatically |
 | `review_dimensions` | no | `general,security,performance,testing` | Subagent dimensions |
 | `review_language` | no | `English` | Preferred language for review comments and summary |
 | `min_finding_confidence` | no | `0.72` | Keep only findings at or above this confidence (0-1) |

@@ -6,13 +6,14 @@ const { filterFiles } = require('./globs');
 const { buildDiffLineMaps, resolveInlineLocation } = require('./diff-map');
 const { inlineKeyFromFinding } = require('./inline-key');
 const {
-  configureOpenAIClient,
+  configureRuntime,
   createPlannerAgent,
   createReviewerAgent,
   runStructuredWithRepair,
   buildPlannerInput,
   buildBatchReviewInput
 } = require('./agents');
+const { createProvider, createModel } = require('./provider');
 const {
   normalizeFindings,
   dedupeAndSortFindings,
@@ -490,12 +491,14 @@ async function runAction() {
   let subAgentRuns = 0;
 
   if (patchFiles.length > 0) {
-    configureOpenAIClient({
-      apiKey: config.openaiApiKey,
-      baseURL: config.openaiApiBase || undefined,
-      compatibilityMode: config.llmCompatibilityMode
+    const provider = createProvider({
+      provider: config.aiProvider,
+      apiKey: config.apiKey,
+      baseURL: config.apiBase || undefined
     });
-    core.info(`LLM compatibility mode: ${config.llmCompatibilityMode}`);
+    const plannerModelInstance = createModel(provider, config.plannerModel);
+    configureRuntime({ model: plannerModelInstance });
+    core.info(`AI provider: ${config.aiProvider}`);
 
     const planner = createPlannerAgent({
       model: config.plannerModel,

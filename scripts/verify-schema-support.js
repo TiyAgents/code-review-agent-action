@@ -4,12 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  configureOpenAIClient,
+  configureRuntime,
   createPlannerAgent,
   createReviewerAgent,
   runStructuredWithRepair
 } = require('../src/agents');
-const { COMPATIBILITY_MODES } = require('../src/model-runtime');
+const { createProvider, createModel } = require('../src/provider');
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -73,34 +73,19 @@ function parseModelList(value) {
   return models;
 }
 
-function parseModeList(value) {
-  const allowed = new Set(COMPATIBILITY_MODES.filter((mode) => mode !== 'auto'));
-  const selected = [];
-  for (const entry of String(value || '').split(/[|,]/)) {
-    const mode = entry.trim();
-    if (!mode || !allowed.has(mode) || selected.includes(mode)) {
-      continue;
-    }
-    selected.push(mode);
-  }
-  return selected.length > 0
-    ? selected
-    : ['responses_json_schema', 'chat_json_schema', 'chat_json_object', 'prompt_json'];
-}
-
 function summarizeError(error) {
   return String(error?.message || error || 'unknown_error').slice(0, 220);
 }
 
-async function runCase({ model, baseURL, apiKey, mode, name, agent, input }) {
-  configureOpenAIClient({ apiKey, baseURL, compatibilityMode: mode });
+async function runCase({ provider, model, name, agent, input }) {
+  const modelInstance = createModel(provider, model);
+  configureRuntime({ model: modelInstance });
   const result = await runStructuredWithRepair(agent, input, { allowRepair: true });
 
   if (result.ok) {
     return {
       ok: true,
       name,
-      mode,
       repaired: result.repaired
     };
   }
@@ -108,7 +93,6 @@ async function runCase({ model, baseURL, apiKey, mode, name, agent, input }) {
   return {
     ok: false,
     name,
-    mode,
     error: summarizeError(result.error)
   };
 }
@@ -117,14 +101,14 @@ async function main() {
   const cwd = process.cwd();
   loadEnvFile(path.join(cwd, '.env'));
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  const baseURL = process.env.OPENAI_API_BASE || '';
+  const apiKey = process.env.OPENAI_API_KEY || process.env.API_KEY || '';
+  const baseURL = process.env.OPENAI_API_BASE || process.env.API_BASE || '';
+  const providerType = process.env.AI_PROVIDER || 'openai';
   const modelInput = process.env.MODEL || process.env.OPENAI_MODEL || '';
-  const modes = parseModeList(process.env.COMPATIBILITY_MODES || '');
   const bugProbeRequired = parseBooleanEnv('BUG_PROBE_REQUIRED', false);
 
   if (!apiKey) {
-    throw new Error('Missing OPENAI_API_KEY. Set it in environment or .env.');
+    throw new Error('Missing API key. Set OPENAI_API_KEY or API_KEY in environment or .env.');
   }
 
   const models = parseModelList(modelInput);
@@ -132,8 +116,14 @@ async function main() {
     throw new Error('Missing MODEL. Set MODEL in environment or .env. Use "|" to test multiple models.');
   }
 
+  const provider = createProvider({
+    provider: providerType,
+    apiKey,
+    baseURL: baseURL || undefined
+  });
+
   console.log(
-    `Compatibility check start: models=${models.join('|')}${baseURL ? ` base=${baseURL}` : ''} modes=${modes.join(',')}`
+    `Compatibility check start: provider=${providerType} models=${models.join('|')}${baseURL ? ` base=${baseURL}` : ''}`
   );
 
   const plannerPrompt = [
@@ -207,65 +197,52 @@ async function main() {
       projectGuidance: null
     });
 
-    const modeResults = [];
-    for (const mode of modes) {
-      console.log(`-- mode: ${mode}`);
-      const cases = [
-        { name: 'planner', agent: planner, input: plannerPrompt },
-        { name: 'reviewer', agent: reviewer, input: reviewerPrompt },
-        { name: 'bug_probe', agent: reviewer, input: bugProbePrompt }
-      ];
+    const cases = [
+      { name: 'planner', agent: planner, input: plannerPrompt },
+      { name: 'reviewer', agent: reviewer, input: reviewerPrompt },
+      { name: 'bug_probe', agent: reviewer, input: bugProbePrompt }
+    ];
 
-      const results = [];
-      for (const testCase of cases) {
-        process.stdout.write(`- ${testCase.name}: `);
-        const result = await runCase({
-          model,
-          baseURL,
-          apiKey,
-          mode,
-          ...testCase
-        });
-        results.push(result);
-        if (result.ok) {
-          process.stdout.write(`PASS${result.repaired ? ' (repaired)' : ''}\n`);
-        } else {
-          process.stdout.write(`FAIL (${result.error})\n`);
-        }
+    const results = [];
+    for (const testCase of cases) {
+      process.stdout.write(`- ${testCase.name}: `);
+      const result = await runCase({
+        provider,
+        model,
+        ...testCase
+      });
+      results.push(result);
+      if (result.ok) {
+        process.stdout.write(`PASS${result.repaired ? ' (repaired)' : ''}\n`);
+      } else {
+        process.stdout.write(`FAIL (${result.error})\n`);
       }
-
-      modeResults.push({ mode, results });
     }
 
-    const recommended = modeResults.find(({ results }) => {
-      const plannerOk = results.find((item) => item.name === 'planner')?.ok;
-      const reviewerOk = results.find((item) => item.name === 'reviewer')?.ok;
-      return plannerOk && reviewerOk;
-    });
+    const plannerOk = results.find((item) => item.name === 'planner')?.ok;
+    const reviewerOk = results.find((item) => item.name === 'reviewer')?.ok;
 
-    if (recommended) {
-      console.log(`Recommended mode: ${recommended.mode}`);
+    if (plannerOk && reviewerOk) {
+      console.log('Result: PASS');
     } else {
-      console.log('Recommended mode: none');
+      console.log('Result: FAIL');
     }
 
-    for (const { mode, results } of modeResults) {
-      const hardFailures = results
-        .filter((item) => !item.ok && (item.name !== 'bug_probe' || bugProbeRequired))
-        .map((item) => ({ ...item, model, mode }));
-      allHardFailures.push(...hardFailures);
+    const hardFailures = results
+      .filter((item) => !item.ok && (item.name !== 'bug_probe' || bugProbeRequired))
+      .map((item) => ({ ...item, model }));
+    allHardFailures.push(...hardFailures);
 
-      const bugProbeResult = results.find((item) => item.name === 'bug_probe');
-      if (bugProbeResult && !bugProbeResult.ok && !bugProbeRequired) {
-        console.warn(`Bug probe (${mode}): FAIL (non-blocking).`);
-      }
+    const bugProbeResult = results.find((item) => item.name === 'bug_probe');
+    if (bugProbeResult && !bugProbeResult.ok && !bugProbeRequired) {
+      console.warn('Bug probe: FAIL (non-blocking).');
     }
   }
 
   if (allHardFailures.length > 0) {
     console.error('\nCompatibility check failed.');
     for (const item of allHardFailures) {
-      console.error(`- [${item.model}] [${item.mode}] ${item.name}: ${item.error}`);
+      console.error(`- [${item.model}] ${item.name}: ${item.error}`);
     }
     process.exitCode = 1;
     return;

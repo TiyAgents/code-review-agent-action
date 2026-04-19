@@ -14,33 +14,39 @@ jobs:
   self-test:
     runs-on: ubuntu-latest
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
 
-      - name: Check OPENAI_API_KEY
-        if: ${{ env.OPENAI_API_KEY == '' }}
-        run: echo "OPENAI_API_KEY is not set. Skip self-test run."
+      - name: Check LLM_API_KEY
+        if: ${{ env.LLM_API_KEY == '' }}
+        run: echo "LLM_API_KEY is not set. Skip self-test run."
 
       - name: Run Action From Current Branch
-        if: ${{ env.OPENAI_API_KEY != '' }}
+        if: ${{ env.LLM_API_KEY != '' }}
         uses: ./
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          openai_api_key: ${{ env.OPENAI_API_KEY }}
-          openai_api_base: ${{ vars.OPENAI_API_BASE }}
+          # Provider 配置（新字段）
+          ai_provider: ${{ vars.LLM_PROVIDER_PROTOCOL }}
+          api_key: ${{ env.LLM_API_KEY }}
+          api_base: ${{ vars.LLM_API_BASE }}
+
           # [可选] Planner 使用模型；默认 gpt-5.3-codex
           # 可选值：任意可用模型名（字符串）
-          planner_model: ${{ vars.PLANNER_OPENAI_MODEL }}
+          planner_model: ${{ vars.PLANNER_MODEL }}
 
           # [可选] SubAgent 使用模型；默认 gpt-5.3-codex
           # 可选值：任意可用模型名（字符串）
-          reviewer_model: ${{ vars.DEFAULT_OPENAI_MODEL }}
+          reviewer_model: ${{ vars.DEFAULT_MODEL }}
 
-          openai_api_base_allowlist: |
+          api_base_allowlist: |
             api.openai.com
             zenmux.ai
+            opencode.ai
+            tokenhub.tencentmaas.com
+            api.lkeap.cloud.tencent.com
 
           include: |
             **/*.js

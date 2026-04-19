@@ -20,22 +20,26 @@ jobs:
 
       - name: Run AI Code Review Action
         if: ${{ env.OPENAI_API_KEY != '' }}
-        uses: TiyAgents/code-review-agent-action@v2
+        uses: TiyAgents/code-review-agent-action@v3
         with:
           # [Required] GitHub token with pull-requests:write and issues:write permissions
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-          # [Conditionally required] OpenAI key. If not provided here,
-          # it must be available via OPENAI_API_KEY environment variable
-          openai_api_key: ${{ env.OPENAI_API_KEY }}
+          # [Optional] AI provider type; default is openai
+          # Allowed values: openai, anthropic, google, mistral, openai-compatible
+          ai_provider: openai
 
-          # [Optional] OpenAI base URL; any OpenAI-compatible API base URL
-          # If omitted, default official base is used; can also come from OPENAI_API_BASE
-          openai_api_base: ${{ vars.OPENAI_API_BASE }}
+          # [Conditionally required] API key for the selected provider.
+          # If not provided here, falls back to openai_api_key input or OPENAI_API_KEY env
+          api_key: ${{ env.OPENAI_API_KEY }}
 
-          # [Optional] Allowed hosts for openai_api_base (comma/newline separated); default api.openai.com
+          # [Optional] Base URL for the AI provider API endpoint
+          # If omitted, default official base is used; can also come from OPENAI_API_BASE env
+          api_base: ${{ vars.OPENAI_API_BASE }}
+
+          # [Optional] Allowed hosts for api_base (comma/newline separated); default api.openai.com
           # Required when using a custom OpenAI-compatible gateway host
-          openai_api_base_allowlist: |
+          api_base_allowlist: |
             api.openai.com
             your-gateway.example.com
 
@@ -60,10 +64,6 @@ jobs:
           # [Optional] Sub-agent model; default is gpt-5.3-codex
           # Allowed values: any available model name (string)
           reviewer_model: gpt-5.3-codex
-
-          # [Optional] Compatibility mode for OpenAI-compatible APIs; default is auto
-          # Allowed values: auto, responses_json_schema, chat_json_schema, chat_json_object, prompt_json
-          llm_compatibility_mode: auto
 
           # [Optional] Review dimensions (comma or newline separated);
           # default is general,security,performance,testing
