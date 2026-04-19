@@ -903,8 +903,9 @@ async function runAction() {
       const semaphore = createSemaphore(config.maxConcurrency);
       const batchCount = plannedBatches.length;
 
-      // Pre-allocate budget: each batch gets at most roundDimensions.length calls
-      const estimatedCallsPerBatch = roundDimensions.length;
+      // Pre-allocate budget: each batch may use up to roundDimensions.length calls,
+      // with a 2x multiplier to account for potential structured-output repair retries.
+      const estimatedCallsPerBatch = roundDimensions.length * 2;
       let budgetAllowedBatches = batchCount;
       if (estimatedCallsPerBatch > 0) {
         const budgetRemaining = config.maxModelCalls - modelCalls;
