@@ -171,6 +171,7 @@ function loadConfig() {
     coverageFirstRoundPrimaryOnly: parseBooleanInput('coverage_first_round_primary_only', true),
     autoMinimizeOutdatedComments: parseBooleanInput('auto_minimize_outdated_comments', true),
     maxRounds: parsePositiveIntInput('max_rounds', 8),
+    maxConcurrency: parsePositiveIntInput('max_concurrency', 4),
     maxModelCalls: parsePositiveIntInput('max_model_calls', 40),
     maxFilesPerBatch: parsePositiveIntInput('max_files_per_batch', 8),
     maxContextChars: parsePositiveIntInput('max_context_chars', 128000),

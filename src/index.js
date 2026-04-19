@@ -158,6 +158,36 @@ function getErrorMessage(error, fallback = 'unknown_error') {
   return String(error?.message || error || fallback);
 }
 
+/**
+ * Create a simple concurrency limiter (semaphore).
+ * Returns { run(asyncFn) → Promise } that ensures at most `concurrency`
+ * async functions execute simultaneously.
+ */
+function createSemaphore(concurrency) {
+  let active = 0;
+  const queue = [];
+
+  function tryNext() {
+    while (queue.length > 0 && active < concurrency) {
+      const { fn, resolve, reject } = queue.shift();
+      active += 1;
+      Promise.resolve().then(fn).then(
+        (value) => { active -= 1; resolve(value); tryNext(); },
+        (error) => { active -= 1; reject(error); tryNext(); }
+      );
+    }
+  }
+
+  return {
+    run(fn) {
+      return new Promise((resolve, reject) => {
+        queue.push({ fn, resolve, reject });
+        tryNext();
+      });
+    }
+  };
+}
+
 function shouldUseSummaryOnlyMode({ hadStructuredOutputFailure, hasSuccessfulReviewerOutput }) {
   return Boolean(hadStructuredOutputFailure && !hasSuccessfulReviewerOutput);
 }
@@ -393,6 +423,256 @@ function formatSummaryMarkdown({
   ].join('\n');
 }
 
+/**
+ * Run a single dimension review for a batch. Returns a result object or null on skip.
+ */
+async function runDimension({
+  dimension, round, batchIndex, batchCount, batchFiles, reviewerAgents,
+  config, projectGuidance
+}) {
+  const tag = `Round ${round} [B${batchIndex + 1}/${batchCount}] SubAgent(${dimension})`;
+
+  const agent = reviewerAgents[dimension] || createReviewerAgent({
+    dimension,
+    model: config.reviewerModel,
+    language: config.reviewLanguage,
+    projectGuidance
+  });
+  reviewerAgents[dimension] = agent;
+
+  const reviewInput = buildBatchReviewInput({
+    dimension,
+    round,
+    batchFiles,
+    maxContextChars: config.maxContextChars,
+    availableDimensions: config.reviewDimensions
+  });
+
+  if (reviewInput.selectedPaths.length === 0) {
+    core.warning(`${tag}: selectedPaths=0 due to context budget, skipped.`);
+    return null;
+  }
+
+  const agentStart = Date.now();
+  core.info(`${tag} start: files=${reviewInput.selectedPaths.length}`);
+
+  const reviewResult = await runStructuredWithRepair(agent, reviewInput.prompt, {
+    allowRepair: true,
+    maxTurns: 10
+  });
+  const elapsedMs = Date.now() - agentStart;
+
+  if (!reviewResult.ok) {
+    const reviewerErrorMessage = getErrorMessage(reviewResult.error);
+    core.warning(
+      `${tag} failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewerErrorMessage}`
+    );
+    return {
+      ok: false,
+      dimension,
+      calls: reviewResult.calls,
+      degradedReason: `reviewer_structured_output_failed_round_${round}_${dimension}: ${sanitizePublicErrorDetail(reviewerErrorMessage)}`
+    };
+  }
+
+  const findingCount = (reviewResult.output.findings || []).length;
+  const fileConclusionCount = (reviewResult.output.fileConclusions || []).length;
+  const suggestionCount = (reviewResult.output.actionableSuggestions || []).length;
+  core.info(
+    `${tag} done: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} findings=${findingCount} file_conclusions=${fileConclusionCount} suggestions=${suggestionCount}`
+  );
+
+  return {
+    ok: true,
+    dimension,
+    calls: reviewResult.calls,
+    selectedPaths: reviewInput.selectedPaths,
+    output: reviewResult.output
+  };
+}
+
+/**
+ * Execute a single batch with parallel dimension execution.
+ * general dimension runs first (to collect recommendedExtraDimensions),
+ * then remaining dimensions run in parallel via the shared semaphore.
+ */
+async function executeBatch({
+  batch, batchIndex, batchCount, round, roundDimensions,
+  pendingFileByPath, reviewerAgents, config, projectGuidance, semaphore
+}) {
+  const tag = `Round ${round} [B${batchIndex + 1}/${batchCount}]`;
+
+  // Build result accumulator
+  const result = {
+    executed: false,
+    calls: 0,
+    reviewerCalls: 0,
+    subAgentRuns: 0,
+    hadStructuredOutputFailure: false,
+    hasSuccessfulReviewerOutput: false,
+    degradedReasons: [],
+    findings: [],
+    actionableSuggestions: [],
+    potentialRisks: [],
+    testSuggestions: [],
+    fileConclusions: [],
+    coveredPaths: [],
+    dimensionResults: []
+  };
+
+  const batchFiles = batch.filePaths
+    .map((path) => pendingFileByPath.get(path))
+    .filter(Boolean);
+
+  if (batchFiles.length === 0) {
+    core.warning(`${tag}: no resolvable files after mapping, skipped.`);
+    return result;
+  }
+
+  result.executed = true;
+  core.info(`${tag}: focus=${batch.focus} files=${batchFiles.length}`);
+
+  // Build execution dimensions: general first
+  const executionDimensions = [];
+  if (roundDimensions.includes('general')) {
+    executionDimensions.push('general');
+  }
+  for (const dimension of roundDimensions) {
+    if (dimension !== 'general') {
+      executionDimensions.push(dimension);
+    }
+  }
+  if (executionDimensions.length === 0 && roundDimensions.length > 0) {
+    executionDimensions.push(roundDimensions[0]);
+  }
+
+  // Helper to process a dimension result into the batch accumulator
+  function collectDimensionResult(dimResult) {
+    if (!dimResult) return;
+    result.calls += dimResult.calls;
+    result.reviewerCalls += dimResult.calls;
+    result.subAgentRuns += 1;
+
+    if (!dimResult.ok) {
+      result.hadStructuredOutputFailure = true;
+      result.degradedReasons.push(dimResult.degradedReason);
+      return;
+    }
+
+    result.hasSuccessfulReviewerOutput = true;
+    result.dimensionResults.push({
+      dimension: dimResult.dimension,
+      selectedPaths: dimResult.selectedPaths
+    });
+
+    for (const finding of dimResult.output.findings || []) {
+      result.findings.push({
+        ...finding,
+        category: finding.category || dimResult.dimension,
+        sourceDimension: dimResult.dimension
+      });
+    }
+
+    for (const suggestion of dimResult.output.actionableSuggestions || []) {
+      result.actionableSuggestions.push(suggestion);
+    }
+
+    for (const risk of dimResult.output.potentialRisks || []) {
+      result.potentialRisks.push(risk);
+    }
+
+    for (const testSuggestion of dimResult.output.testSuggestions || []) {
+      result.testSuggestions.push(testSuggestion);
+    }
+
+    for (const fc of dimResult.output.fileConclusions || []) {
+      result.fileConclusions.push({
+        path: fc.path,
+        conclusion: fc.conclusion,
+        risks: fc.risks || [],
+        testSuggestions: fc.testSuggestions || [],
+        note: fc.note || ''
+      });
+    }
+
+    for (const p of dimResult.selectedPaths) {
+      result.coveredPaths.push(p);
+    }
+  }
+
+  // Phase 1: run general dimension first (if present) to get extra dimension recommendations
+  const hasGeneral = executionDimensions[0] === 'general';
+  let parallelDimensions = executionDimensions;
+
+  if (hasGeneral) {
+    const generalResult = await runDimension({
+      dimension: 'general',
+      round,
+      batchIndex,
+      batchCount,
+      batchFiles,
+      reviewerAgents,
+      config,
+      projectGuidance
+    });
+    collectDimensionResult(generalResult);
+
+    // Check for recommended extra dimensions from general
+    if (generalResult?.ok) {
+      const recommended = normalizeDimensionNames(generalResult.output.recommendedExtraDimensions || [])
+        .filter((x) => x !== 'general')
+        .filter((x) => config.reviewDimensions.includes(x));
+      const appendable = recommended.filter((x) => !executionDimensions.includes(x));
+      const recommendationReason = String(generalResult.output.recommendationReason || '').trim();
+
+      if (appendable.length > 0) {
+        executionDimensions.push(...appendable);
+        core.info(
+          `${tag}: general requested extra dimensions=${appendable.join(', ')}${recommendationReason ? ` reason=${recommendationReason}` : ''}`
+        );
+      } else if (recommendationReason) {
+        core.info(`${tag}: general recommendation note=${recommendationReason}`);
+      }
+    }
+
+    // Remaining dimensions (everything except general)
+    parallelDimensions = executionDimensions.filter((d) => d !== 'general');
+  }
+
+  // Phase 2: run remaining dimensions in parallel via semaphore
+  if (parallelDimensions.length > 0) {
+    const dimPromises = parallelDimensions.map((dimension) =>
+      semaphore.run(() => runDimension({
+        dimension,
+        round,
+        batchIndex,
+        batchCount,
+        batchFiles,
+        reviewerAgents,
+        config,
+        projectGuidance
+      }))
+    );
+
+    const dimSettled = await Promise.allSettled(dimPromises);
+    for (let i = 0; i < dimSettled.length; i += 1) {
+      const outcome = dimSettled[i];
+      if (outcome.status === 'rejected') {
+        core.warning(`${tag} SubAgent(${parallelDimensions[i]}) unexpected error: ${getErrorMessage(outcome.reason)}`);
+        result.subAgentRuns += 1;
+        continue;
+      }
+      collectDimensionResult(outcome.value);
+    }
+  }
+
+  if (!result.hasSuccessfulReviewerOutput && result.executed) {
+    core.warning(`${tag}: no successful sub-agent outputs.`);
+  }
+
+  return result;
+}
+
 async function listPullFiles(octokit, owner, repo, pullNumber) {
   return octokit.paginate(octokit.rest.pulls.listFiles, {
     owner,
@@ -619,186 +899,117 @@ async function runAction() {
 
       let roundProgress = false;
 
-      for (let batchIndex = 0; batchIndex < plannedBatches.length; batchIndex += 1) {
-        const batch = plannedBatches[batchIndex];
-        if (modelCalls >= config.maxModelCalls) {
-          break;
-        }
+      // --- Parallel batch execution ---
+      const semaphore = createSemaphore(config.maxConcurrency);
+      const batchCount = plannedBatches.length;
 
-        const batchFiles = batch.filePaths
-          .map((path) => pendingFileByPath.get(path))
-          .filter(Boolean);
+      // Pre-allocate budget: each batch gets at most roundDimensions.length calls
+      const estimatedCallsPerBatch = roundDimensions.length;
+      let budgetAllowedBatches = batchCount;
+      if (estimatedCallsPerBatch > 0) {
+        const budgetRemaining = config.maxModelCalls - modelCalls;
+        budgetAllowedBatches = Math.min(batchCount, Math.floor(budgetRemaining / estimatedCallsPerBatch));
+      }
 
-        if (batchFiles.length === 0) {
-          core.warning(`Round ${round} Batch ${batchIndex + 1}: no resolvable files after mapping, skipped.`);
-          continue;
-        }
-        executedBatchCount += 1;
+      if (budgetAllowedBatches <= 0) {
+        core.info(`Round ${round}: insufficient budget for any batch (remaining=${config.maxModelCalls - modelCalls}), skipping.`);
+        break;
+      }
+
+      const batchesToRun = plannedBatches.slice(0, budgetAllowedBatches);
+      if (batchesToRun.length < batchCount) {
         core.info(
-          `Round ${round} Batch ${batchIndex + 1}/${plannedBatches.length}: focus=${batch.focus} files=${batchFiles.length}`
-        );
-
-        const batchResultByDimension = [];
-        let batchSuccessful = false;
-        const executionDimensions = [];
-        if (roundDimensions.includes('general')) {
-          executionDimensions.push('general');
-        }
-        for (const dimension of roundDimensions) {
-          if (dimension !== 'general') {
-            executionDimensions.push(dimension);
-          }
-        }
-        if (executionDimensions.length === 0 && roundDimensions.length > 0) {
-          executionDimensions.push(roundDimensions[0]);
-        }
-
-        for (let dimIndex = 0; dimIndex < executionDimensions.length; dimIndex += 1) {
-          const dimension = executionDimensions[dimIndex];
-          if (modelCalls >= config.maxModelCalls) {
-            break;
-          }
-
-          const agent = reviewerAgents[dimension] || createReviewerAgent({
-            dimension,
-            model: config.reviewerModel,
-            language: config.reviewLanguage,
-            projectGuidance
-          });
-          reviewerAgents[dimension] = agent;
-
-          const reviewInput = buildBatchReviewInput({
-            dimension,
-            round,
-            batchFiles,
-            maxContextChars: config.maxContextChars,
-            availableDimensions: config.reviewDimensions
-          });
-
-          if (reviewInput.selectedPaths.length === 0) {
-            core.warning(
-              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}): selectedPaths=0 due to context budget, skipped.`
-            );
-            continue;
-          }
-
-          const agentStart = Date.now();
-          core.info(
-            `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) start: files=${reviewInput.selectedPaths.length}`
-          );
-          const reviewResult = await runStructuredWithRepair(agent, reviewInput.prompt, {
-            allowRepair: true,
-            maxTurns: 10
-          });
-          modelCalls += reviewResult.calls;
-          reviewerCalls += reviewResult.calls;
-          subAgentRuns += 1;
-          const elapsedMs = Date.now() - agentStart;
-
-          if (!reviewResult.ok) {
-            const reviewerErrorMessage = getErrorMessage(reviewResult.error);
-            hadStructuredOutputFailure = true;
-            addPublicDegradedReason(
-              degradedReasons,
-              `reviewer_structured_output_failed_round_${round}_${dimension}`,
-              reviewerErrorMessage
-            );
-            core.warning(
-              `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) failed: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} error=${reviewerErrorMessage}`
-            );
-            continue;
-          }
-          hasSuccessfulReviewerOutput = true;
-
-          const findingCount = (reviewResult.output.findings || []).length;
-          const fileConclusionCount = (reviewResult.output.fileConclusions || []).length;
-          const suggestionCount = (reviewResult.output.actionableSuggestions || []).length;
-          core.info(
-            `Round ${round} Batch ${batchIndex + 1} SubAgent(${dimension}) done: calls=${reviewResult.calls} elapsed_ms=${elapsedMs} findings=${findingCount} file_conclusions=${fileConclusionCount} suggestions=${suggestionCount}`
-          );
-
-          if (dimension === 'general') {
-            const recommended = normalizeDimensionNames(reviewResult.output.recommendedExtraDimensions || [])
-              .filter((x) => x !== 'general')
-              .filter((x) => config.reviewDimensions.includes(x));
-            const appendable = recommended.filter((x) => !executionDimensions.includes(x));
-            const recommendationReason = String(reviewResult.output.recommendationReason || '').trim();
-
-            if (appendable.length > 0) {
-              executionDimensions.push(...appendable);
-              core.info(
-                `Round ${round} Batch ${batchIndex + 1}: general requested extra dimensions=${appendable.join(', ')}${recommendationReason ? ` reason=${recommendationReason}` : ''}`
-              );
-            } else if (recommendationReason) {
-              core.info(
-                `Round ${round} Batch ${batchIndex + 1}: general recommendation note=${recommendationReason}`
-              );
-            }
-          }
-
-          batchSuccessful = true;
-          batchResultByDimension.push({
-            dimension,
-            selectedPaths: reviewInput.selectedPaths,
-            output: reviewResult.output
-          });
-        }
-
-        if (!batchSuccessful) {
-          core.warning(`Round ${round} Batch ${batchIndex + 1}: no successful sub-agent outputs.`);
-          continue;
-        }
-
-        for (const result of batchResultByDimension) {
-          for (const finding of result.output.findings || []) {
-            rawFindings.push({
-              ...finding,
-              category: finding.category || result.dimension,
-              sourceDimension: result.dimension
-            });
-          }
-
-          for (const suggestion of result.output.actionableSuggestions || []) {
-            actionableSuggestionsSet.add(suggestion);
-          }
-
-          for (const risk of result.output.potentialRisks || []) {
-            potentialRisksSet.add(risk);
-          }
-
-          for (const testSuggestion of result.output.testSuggestions || []) {
-            testSuggestionsSet.add(testSuggestion);
-          }
-
-          for (const fileConclusion of result.output.fileConclusions || []) {
-            if (!targetPathSet.has(fileConclusion.path)) {
-              continue;
-            }
-
-            fileConclusionsByPath.set(fileConclusion.path, {
-              path: fileConclusion.path,
-              conclusion: fileConclusion.conclusion,
-              risks: fileConclusion.risks || [],
-              testSuggestions: fileConclusion.testSuggestions || [],
-              note: fileConclusion.note || ''
-            });
-          }
-
-          for (const path of result.selectedPaths) {
-            if (coverageState.get(path)?.status === 'pending') {
-              coverageState.set(path, {
-                status: 'covered',
-                reason: `reviewed_round_${round}`
-              });
-              roundProgress = true;
-            }
-          }
-        }
-
-        core.info(
-          `Round ${round} Batch ${batchIndex + 1}: merged_dimensions=${batchResultByDimension.length} total_model_calls=${modelCalls}/${config.maxModelCalls}`
+          `Round ${round}: budget limits parallel batches to ${batchesToRun.length}/${batchCount}`
         );
       }
+
+      const batchPromises = batchesToRun.map((batch, batchIndex) =>
+        semaphore.run(() => executeBatch({
+          batch,
+          batchIndex,
+          batchCount,
+          round,
+          roundDimensions,
+          pendingFileByPath,
+          reviewerAgents,
+          config,
+          projectGuidance,
+          semaphore
+        }))
+      );
+
+      const batchSettled = await Promise.allSettled(batchPromises);
+
+      // --- Merge batch results into global state ---
+      for (let i = 0; i < batchSettled.length; i += 1) {
+        const outcome = batchSettled[i];
+        if (outcome.status === 'rejected') {
+          core.warning(`Round ${round} Batch ${i + 1}: unexpected error: ${getErrorMessage(outcome.reason)}`);
+          continue;
+        }
+
+        const result = outcome.value;
+        modelCalls += result.calls;
+        reviewerCalls += result.reviewerCalls;
+        subAgentRuns += result.subAgentRuns;
+
+        if (result.executed) {
+          executedBatchCount += 1;
+        }
+
+        if (result.hadStructuredOutputFailure) {
+          hadStructuredOutputFailure = true;
+        }
+        if (result.hasSuccessfulReviewerOutput) {
+          hasSuccessfulReviewerOutput = true;
+        }
+
+        for (const reason of result.degradedReasons) {
+          degradedReasons.push(reason);
+        }
+
+        for (const finding of result.findings) {
+          rawFindings.push(finding);
+        }
+
+        for (const suggestion of result.actionableSuggestions) {
+          actionableSuggestionsSet.add(suggestion);
+        }
+
+        for (const risk of result.potentialRisks) {
+          potentialRisksSet.add(risk);
+        }
+
+        for (const testSuggestion of result.testSuggestions) {
+          testSuggestionsSet.add(testSuggestion);
+        }
+
+        for (const fc of result.fileConclusions) {
+          if (targetPathSet.has(fc.path)) {
+            fileConclusionsByPath.set(fc.path, fc);
+          }
+        }
+
+        for (const coveredPath of result.coveredPaths) {
+          if (coverageState.get(coveredPath)?.status === 'pending') {
+            coverageState.set(coveredPath, {
+              status: 'covered',
+              reason: `reviewed_round_${round}`
+            });
+            roundProgress = true;
+          }
+        }
+
+        if (result.dimensionResults.length > 0) {
+          core.info(
+            `Round ${round} [B${i + 1}/${batchCount}]: merged_dimensions=${result.dimensionResults.length} batch_calls=${result.calls}`
+          );
+        }
+      }
+
+      core.info(
+        `Round ${round}: all batches settled. total_model_calls=${modelCalls}/${config.maxModelCalls}`
+      );
 
       if (plannerRequestedStop) {
         plannerStoppedEarly = true;
@@ -1070,6 +1281,7 @@ module.exports = {
     chunk,
     addPublicDegradedReason,
     getErrorMessage,
+    createSemaphore,
     shouldUseSummaryOnlyMode,
     sanitizePlannedBatches,
     summarizePlannerBatchesForLog,

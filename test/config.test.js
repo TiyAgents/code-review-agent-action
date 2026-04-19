@@ -271,3 +271,33 @@ test('loadConfig rejects api_base when allowlist resolves to empty after normali
     /allowlist is empty/
   );
 });
+
+test('loadConfig defaults maxConcurrency to 4', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    api_key: 'sk-test'
+  });
+
+  assert.equal(config.maxConcurrency, 4);
+});
+
+test('loadConfig parses custom max_concurrency', () => {
+  const config = loadConfigWithMockedInputs({
+    github_token: 'ghs_xxx',
+    api_key: 'sk-test',
+    max_concurrency: '8'
+  });
+
+  assert.equal(config.maxConcurrency, 8);
+});
+
+test('loadConfig rejects invalid max_concurrency', () => {
+  assert.throws(
+    () => loadConfigWithMockedInputs({
+      github_token: 'ghs_xxx',
+      api_key: 'sk-test',
+      max_concurrency: '0'
+    }),
+    /max_concurrency must be a positive integer/
+  );
+});
