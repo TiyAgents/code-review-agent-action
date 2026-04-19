@@ -1,6 +1,6 @@
 name: Inline PR Review Agent
 
-description: PR code review action powered by AI SDK with multi-provider support (OpenAI, Anthropic, Google, Mistral, OpenAI-compatible) and structured output.
+description: AI-powered PR review with multi-provider support and structured output.
 
 author: TiyAgents Team
 
