@@ -497,6 +497,9 @@ async function runAction() {
       baseURL: config.apiBase || undefined
     });
     const plannerModelInstance = createModel(provider, config.plannerModel);
+    const reviewerModelInstance = config.reviewerModel !== config.plannerModel
+      ? createModel(provider, config.reviewerModel)
+      : plannerModelInstance;
     configureRuntime({ model: plannerModelInstance });
     core.info(`AI provider: ${config.aiProvider}`);
 
@@ -509,6 +512,7 @@ async function runAction() {
       reviewerAgents[dimension] = createReviewerAgent({
         dimension,
         model: config.reviewerModel,
+        modelInstance: reviewerModelInstance,
         language: config.reviewLanguage,
         projectGuidance
       });

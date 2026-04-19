@@ -9,7 +9,7 @@ const {
   createReviewerAgent,
   runStructuredWithRepair
 } = require('../src/agents');
-const { createProvider, createModel } = require('../src/provider');
+const { createProvider, createModel, SUPPORTED_PROVIDERS } = require('../src/provider');
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -104,6 +104,12 @@ async function main() {
   const apiKey = process.env.OPENAI_API_KEY || process.env.API_KEY || '';
   const baseURL = process.env.OPENAI_API_BASE || process.env.API_BASE || '';
   const providerType = process.env.AI_PROVIDER || 'openai';
+  if (!SUPPORTED_PROVIDERS.includes(providerType)) {
+    throw new Error(
+      `Unsupported AI_PROVIDER: "${providerType}". ` +
+      `Supported: ${SUPPORTED_PROVIDERS.join(', ')}`
+    );
+  }
   const modelInput = process.env.MODEL || process.env.OPENAI_MODEL || '';
   const bugProbeRequired = parseBooleanEnv('BUG_PROBE_REQUIRED', false);
 

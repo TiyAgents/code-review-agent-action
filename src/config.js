@@ -35,9 +35,15 @@ function validateBaseURL(baseURL, allowedHosts) {
     throw new Error('Input api_base must not contain username/password credentials.');
   }
 
-  if (allowedHosts && allowedHosts.length > 0) {
-    const host = normalizeHost(parsed.hostname);
+  if (Array.isArray(allowedHosts)) {
     const allow = new Set(allowedHosts.map(normalizeHost).filter(Boolean));
+    if (allow.size === 0) {
+      throw new Error(
+        'Input api_base is set but allowlist is empty — all hosts are blocked. ' +
+        'Set api_base_allowlist (or openai_api_base_allowlist) to explicitly trust the target host.'
+      );
+    }
+    const host = normalizeHost(parsed.hostname);
     if (!allow.has(host)) {
       throw new Error(
         `Input api_base host is not in allowlist: ${host}. ` +

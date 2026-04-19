@@ -85,9 +85,10 @@ async function runStructuredWithRepair(agent, input, options = {}) {
 
 async function requestStructuredOutput({ agent, input, repairContext }) {
   const userPrompt = buildUserInput(agent, input, repairContext);
+  const model = agent.modelInstance || runtimeState.model;
 
   const result = await generateText({
-    model: runtimeState.model,
+    model,
     system: agent.instructions,
     prompt: userPrompt,
     output: Output.object({ schema: agent.schema })
