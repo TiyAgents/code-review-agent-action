@@ -1,5 +1,5 @@
 const core = require('@actions/core');
-const { COMPATIBILITY_MODES } = require('./model-runtime');
+const { SUPPORTED_PROVIDERS } = require('./provider');
 
 const DEFAULT_SUMMARY_MARKER = 'ai-code-review-agent:summary';
 const DEFAULT_REVIEW_MARKER = 'ai-code-review-agent:review';
@@ -15,8 +15,8 @@ function normalizeHost(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function validateOpenAIBaseURL(openaiApiBase, allowedHosts) {
-  const raw = String(openaiApiBase || '').trim();
+function validateBaseURL(baseURL, allowedHosts) {
+  const raw = String(baseURL || '').trim();
   if (!raw) {
     return '';
   }
@@ -25,23 +25,25 @@ function validateOpenAIBaseURL(openaiApiBase, allowedHosts) {
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error(`Input openai_api_base must be a valid URL, got: ${raw}`);
+    throw new Error(`Input api_base must be a valid URL, got: ${raw}`);
   }
 
   if (parsed.protocol !== 'https:') {
-    throw new Error(`Input openai_api_base must use https scheme, got: ${parsed.protocol}`);
+    throw new Error(`Input api_base must use https scheme, got: ${parsed.protocol}`);
   }
   if (parsed.username || parsed.password) {
-    throw new Error('Input openai_api_base must not contain username/password credentials.');
+    throw new Error('Input api_base must not contain username/password credentials.');
   }
 
-  const host = normalizeHost(parsed.hostname);
-  const allow = new Set((allowedHosts || []).map(normalizeHost).filter(Boolean));
-  if (!allow.has(host)) {
-    throw new Error(
-      `Input openai_api_base host is not in allowlist: ${host}. ` +
-      'Set openai_api_base_allowlist to explicitly trust this host.'
-    );
+  if (allowedHosts && allowedHosts.length > 0) {
+    const host = normalizeHost(parsed.hostname);
+    const allow = new Set(allowedHosts.map(normalizeHost).filter(Boolean));
+    if (!allow.has(host)) {
+      throw new Error(
+        `Input api_base host is not in allowlist: ${host}. ` +
+        'Set openai_api_base_allowlist to explicitly trust this host.'
+      );
+    }
   }
 
   return raw;
@@ -101,15 +103,38 @@ function uniqueLowercase(items) {
 
 function loadConfig() {
   const githubToken = core.getInput('github_token', { required: true });
-  const openaiApiKey = core.getInput('openai_api_key') || process.env.OPENAI_API_KEY;
-  const openaiApiBaseRaw = core.getInput('openai_api_base') || process.env.OPENAI_API_BASE || '';
-  const openaiApiBaseAllowlist = splitListInput(
-    core.getInput('openai_api_base_allowlist') || process.env.OPENAI_API_BASE_ALLOWLIST || 'api.openai.com'
-  );
-  const openaiApiBase = validateOpenAIBaseURL(openaiApiBaseRaw, openaiApiBaseAllowlist);
 
-  if (!openaiApiKey) {
-    throw new Error('Missing OpenAI API key. Provide input openai_api_key or OPENAI_API_KEY env.');
+  // Provider configuration with backward compatibility
+  const aiProvider = parseEnumInput('ai_provider', 'openai', SUPPORTED_PROVIDERS);
+  const apiKey = core.getInput('api_key')
+    || core.getInput('openai_api_key')
+    || process.env.OPENAI_API_KEY
+    || '';
+  const apiBaseRaw = core.getInput('api_base')
+    || core.getInput('openai_api_base')
+    || process.env.OPENAI_API_BASE
+    || '';
+  const apiBaseAllowlist = splitListInput(
+    core.getInput('api_base_allowlist')
+    || core.getInput('openai_api_base_allowlist')
+    || process.env.OPENAI_API_BASE_ALLOWLIST
+    || 'api.openai.com'
+  );
+  const apiBase = validateBaseURL(apiBaseRaw, apiBaseAllowlist);
+
+  if (!apiKey) {
+    throw new Error(
+      'Missing API key. Provide input api_key (or openai_api_key for backward compatibility) or set OPENAI_API_KEY env.'
+    );
+  }
+
+  // Warn about deprecated llm_compatibility_mode
+  const llmCompatRaw = core.getInput('llm_compatibility_mode') || '';
+  if (llmCompatRaw && llmCompatRaw.trim().toLowerCase() !== 'auto') {
+    core.warning(
+      'Input llm_compatibility_mode is deprecated and will be ignored. ' +
+      'AI SDK handles provider compatibility automatically.'
+    );
   }
 
   const include = splitListInput(core.getInput('include') || '**');
@@ -123,14 +148,15 @@ function loadConfig() {
 
   return {
     githubToken,
-    openaiApiKey,
-    openaiApiBase,
-    openaiApiBaseAllowlist,
+    aiProvider,
+    apiKey,
+    apiBase,
+    openaiApiBaseAllowlist: apiBaseAllowlist,
+    apiBaseAllowlist,
     include,
     exclude,
     plannerModel: core.getInput('planner_model') || 'gpt-5.3-codex',
     reviewerModel: core.getInput('reviewer_model') || 'gpt-5.3-codex',
-    llmCompatibilityMode: parseEnumInput('llm_compatibility_mode', 'auto', COMPATIBILITY_MODES),
     reviewDimensions: normalizedDimensions,
     reviewLanguage,
     minFindingConfidence: parseFloatRangeInput('min_finding_confidence', 0.72, 0, 1),

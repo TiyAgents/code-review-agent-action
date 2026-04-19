@@ -1,6 +1,6 @@
 name: Inline PR Review Agent
 
-description: PR code review action using an OpenAI-compatible structured runtime with inline comments and summary updates.
+description: PR code review action powered by AI SDK with multi-provider support (OpenAI, Anthropic, Google, Mistral, OpenAI-compatible) and structured output.
 
 author: TiyAgents Team
 
@@ -12,16 +12,29 @@ inputs:
   github_token:
     description: GitHub token with pull-requests:write and issues:write permissions.
     required: true
+  ai_provider:
+    description: AI provider type (openai|anthropic|google|mistral|openai-compatible).
+    required: false
+    default: openai
+  api_key:
+    description: API key for the selected AI provider.
+    required: false
+  api_base:
+    description: Optional base URL for the AI provider API endpoint.
+    required: false
   openai_api_key:
-    description: OpenAI API key. Falls back to OPENAI_API_KEY env.
+    description: "[Deprecated: use api_key] OpenAI API key. Falls back to OPENAI_API_KEY env."
     required: false
   openai_api_base:
-    description: Optional OpenAI API base URL. Falls back to OPENAI_API_BASE env.
+    description: "[Deprecated: use api_base] Optional OpenAI API base URL. Falls back to OPENAI_API_BASE env."
     required: false
-  openai_api_base_allowlist:
-    description: Comma/newline separated allowed hostnames for openai_api_base (HTTPS only).
+  api_base_allowlist:
+    description: Comma/newline separated allowed hostnames for api_base (HTTPS only).
     required: false
     default: api.openai.com
+  openai_api_base_allowlist:
+    description: "[Deprecated: use api_base_allowlist] Comma/newline separated allowed hostnames for api_base (HTTPS only)."
+    required: false
   include:
     description: Include globs (comma/newline separated).
     required: false
@@ -39,7 +52,7 @@ inputs:
     required: false
     default: gpt-5.3-codex
   llm_compatibility_mode:
-    description: Compatibility mode for OpenAI-compatible model APIs (auto|responses_json_schema|chat_json_schema|chat_json_object|prompt_json).
+    description: "[Deprecated: AI SDK handles compatibility automatically] Compatibility mode for OpenAI-compatible model APIs."
     required: false
     default: auto
   review_dimensions:

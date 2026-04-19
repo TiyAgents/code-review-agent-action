@@ -1,125 +1,19 @@
-const OpenAIImport = require('openai');
-const { zodTextFormat } = require('openai/helpers/zod');
-
-const OpenAI = OpenAIImport.default || OpenAIImport;
-
-const COMPATIBILITY_MODES = [
-  'auto',
-  'responses_json_schema',
-  'chat_json_schema',
-  'chat_json_object',
-  'prompt_json'
-];
-
-const OFFICIAL_OPENAI_HOST = 'api.openai.com';
-const SUCCESS_MODE_CACHE = new Map();
+const { generateText, Output } = require('ai');
 
 let runtimeState = {
-  client: null,
-  apiKey: '',
-  baseURL: '',
-  compatibilityMode: 'auto'
+  model: null
 };
 
-function configureOpenAIClient({ apiKey, baseURL, compatibilityMode }) {
-  runtimeState = {
-    client: new OpenAI({
-      apiKey,
-      ...(baseURL ? { baseURL } : {})
-    }),
-    apiKey,
-    baseURL: baseURL || '',
-    compatibilityMode: compatibilityMode || 'auto'
-  };
-  SUCCESS_MODE_CACHE.clear();
-}
-
-function getConfiguredHost(baseURL) {
-  if (!baseURL) {
-    return OFFICIAL_OPENAI_HOST;
+/**
+ * Configure the AI SDK runtime with a model instance.
+ *
+ * @param {{ model: import('ai').LanguageModel }} opts
+ */
+function configureRuntime({ model }) {
+  if (!model) {
+    throw new Error('A valid AI SDK model instance is required.');
   }
-
-  try {
-    return new URL(baseURL).hostname.toLowerCase();
-  } catch {
-    return OFFICIAL_OPENAI_HOST;
-  }
-}
-
-function isOfficialHost(baseURL) {
-  return getConfiguredHost(baseURL) === OFFICIAL_OPENAI_HOST;
-}
-
-function getCompatibilityModes({ model, baseURL, configuredMode }) {
-  const explicitMode = String(configuredMode || 'auto').trim();
-  if (explicitMode && explicitMode !== 'auto') {
-    return [explicitMode];
-  }
-
-  const cacheKey = `${getConfiguredHost(baseURL)}|${model}`;
-  const cached = SUCCESS_MODE_CACHE.get(cacheKey);
-  const defaults = isOfficialHost(baseURL)
-    ? ['responses_json_schema', 'chat_json_schema', 'chat_json_object', 'prompt_json']
-    : ['chat_json_object', 'chat_json_schema', 'prompt_json', 'responses_json_schema'];
-
-  if (!cached) {
-    return defaults;
-  }
-
-  return [cached, ...defaults.filter((mode) => mode !== cached)];
-}
-
-function cacheSuccessfulMode({ model, baseURL, mode }) {
-  SUCCESS_MODE_CACHE.set(`${getConfiguredHost(baseURL)}|${model}`, mode);
-}
-
-function clearCachedMode({ model, baseURL }) {
-  SUCCESS_MODE_CACHE.delete(`${getConfiguredHost(baseURL)}|${model}`);
-}
-
-function getJsonSchemaFormat(agent) {
-  if (!agent._jsonSchemaFormat) {
-    const raw = zodTextFormat(agent.schema, agent.responseName || 'output');
-    agent._jsonSchemaFormat = {
-      type: raw.type,
-      name: raw.name,
-      strict: raw.strict,
-      schema: sanitizeJsonSchema(raw.schema)
-    };
-  }
-  return agent._jsonSchemaFormat;
-}
-
-function sanitizeJsonSchema(schema) {
-  if (Array.isArray(schema)) {
-    return schema.map((item) => sanitizeJsonSchema(item));
-  }
-  if (!schema || typeof schema !== 'object') {
-    return schema;
-  }
-
-  const cleaned = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (['$schema', 'default', 'title', 'description', 'examples'].includes(key)) {
-      continue;
-    }
-
-    cleaned[key] = value && typeof value === 'object'
-      ? sanitizeJsonSchema(value)
-      : value;
-  }
-
-  if (cleaned.type === 'integer' && Number.isFinite(cleaned.exclusiveMinimum)) {
-    cleaned.minimum = cleaned.exclusiveMinimum + 1;
-    delete cleaned.exclusiveMinimum;
-  }
-
-  if (cleaned.type === 'integer' && Number.isFinite(cleaned.exclusiveMaximum)) {
-    cleaned.maximum = cleaned.exclusiveMaximum - 1;
-    delete cleaned.exclusiveMaximum;
-  }
-
-  return cleaned;
+  runtimeState = { model };
 }
 
 function buildUserInput(agent, input, repairContext) {
@@ -142,90 +36,30 @@ function buildUserInput(agent, input, repairContext) {
   return blocks.filter((block, index, items) => block || (index > 0 && items[index - 1] !== '')).join('\n');
 }
 
-function buildPromptJsonMessage(agent, input, repairContext) {
-  const blocks = [
-    'Follow these task instructions exactly.',
-    agent.instructions,
-    '',
-    'Required JSON contract:',
-    agent.outputContractPrompt,
-    '',
-    'Task input:',
-    String(input || '').trim(),
-    '',
-    'Return exactly one JSON object with no markdown, no code fences, and no surrounding explanation.'
-  ];
-
-  if (repairContext) {
-    blocks.push('');
-    blocks.push('The previous attempt was invalid. Repair it.');
-    blocks.push(`Validation error: ${repairContext.error}`);
-    if (repairContext.preview) {
-      blocks.push(`Previous output preview: ${repairContext.preview}`);
-    }
-  }
-
-  return blocks.join('\n');
-}
-
+/**
+ * Run a structured output call with AI SDK, with one repair retry on failure.
+ *
+ * @param {object} agent Agent definition with { model, instructions, outputContractPrompt, schema }
+ * @param {string} input User prompt input
+ * @param {{ allowRepair?: boolean }} options
+ * @returns {Promise<{ ok: boolean, output?: any, error?: Error, calls: number, repaired: boolean }>}
+ */
 async function runStructuredWithRepair(agent, input, options = {}) {
-  if (!runtimeState.client) {
-    throw new Error('OpenAI client is not configured. Call configureOpenAIClient first.');
+  if (!runtimeState.model) {
+    throw new Error('Runtime is not configured. Call configureRuntime first.');
   }
 
   const allowRepair = options.allowRepair !== false;
-  const modes = getCompatibilityModes({
-    model: agent.model,
-    baseURL: runtimeState.baseURL,
-    configuredMode: runtimeState.compatibilityMode
-  });
-
   let totalCalls = 0;
-  let repaired = false;
-  const failures = [];
 
-  for (const mode of modes) {
-    const modeResult = await runWithMode(agent, input, {
-      mode,
-      allowRepair,
-      client: runtimeState.client
-    });
-    totalCalls += modeResult.calls;
-    repaired = repaired || modeResult.repaired;
-
-    if (modeResult.ok) {
-      cacheSuccessfulMode({ model: agent.model, baseURL: runtimeState.baseURL, mode });
-      return {
-        ok: true,
-        output: modeResult.output,
-        calls: totalCalls,
-        repaired,
-        mode
-      };
-    }
-
-    clearCachedMode({ model: agent.model, baseURL: runtimeState.baseURL });
-    failures.push(`${mode}: ${modeResult.error.message || String(modeResult.error)}`);
-  }
-
-  return {
-    ok: false,
-    error: new Error(`Structured output failed across modes: ${failures.join(' | ')}`),
-    calls: totalCalls,
-    repaired
-  };
-}
-
-async function runWithMode(agent, input, { mode, allowRepair, client }) {
-  let calls = 0;
-
+  // First attempt
   try {
-    calls += 1;
-    const output = await requestStructuredOutput({ client, agent, input, mode, repairContext: null });
-    return { ok: true, output, calls, repaired: false };
+    totalCalls += 1;
+    const output = await requestStructuredOutput({ agent, input, repairContext: null });
+    return { ok: true, output, calls: totalCalls, repaired: false };
   } catch (firstError) {
-    if (isModeUnsupportedError(firstError) || !allowRepair) {
-      return { ok: false, error: firstError, calls, repaired: false, unsupportedMode: isModeUnsupportedError(firstError) };
+    if (!allowRepair) {
+      return { ok: false, error: firstError, calls: totalCalls, repaired: false };
     }
 
     const repairContext = {
@@ -233,27 +67,41 @@ async function runWithMode(agent, input, { mode, allowRepair, client }) {
       preview: String(firstError.preview || '').slice(0, 300)
     };
 
+    // Repair attempt
     try {
-      calls += 1;
-      const repairedOutput = await requestStructuredOutput({ client, agent, input, mode, repairContext });
-      return { ok: true, output: repairedOutput, calls, repaired: true };
+      totalCalls += 1;
+      const repairedOutput = await requestStructuredOutput({ agent, input, repairContext });
+      return { ok: true, output: repairedOutput, calls: totalCalls, repaired: true };
     } catch (secondError) {
       return {
         ok: false,
         error: new Error(`Structured output failed after repair: ${compactErrorMessage(secondError)}`),
-        calls,
-        repaired: true,
-        unsupportedMode: isModeUnsupportedError(secondError)
+        calls: totalCalls,
+        repaired: true
       };
     }
   }
 }
 
-async function requestStructuredOutput({ client, agent, input, mode, repairContext }) {
-  const request = buildRequest({ client, agent, input, mode, repairContext });
-  const response = await request.execute();
-  const text = request.extractText(response);
+async function requestStructuredOutput({ agent, input, repairContext }) {
+  const userPrompt = buildUserInput(agent, input, repairContext);
 
+  const result = await generateText({
+    model: runtimeState.model,
+    system: agent.instructions,
+    prompt: userPrompt,
+    output: Output.object({ schema: agent.schema })
+  });
+
+  // AI SDK sets output to the parsed object when successful
+  if (result.output !== undefined && result.output !== null) {
+    return result.output;
+  }
+
+  // Fallback: some providers may return text but fail structured parsing.
+  // AI SDK sets output=null when schema validation fails internally,
+  // so we attempt manual JSON extraction from the raw text as a safety net.
+  const text = (result.text || '').trim();
   if (!text) {
     const error = new Error('Model returned empty output text.');
     error.code = 'empty_output';
@@ -263,8 +111,8 @@ async function requestStructuredOutput({ client, agent, input, mode, repairConte
   let parsedObject;
   try {
     parsedObject = JSON.parse(extractJsonObjectText(text));
-  } catch (error) {
-    const wrapped = new Error(`Model output is not valid JSON: ${error.message || String(error)}`);
+  } catch (parseError) {
+    const wrapped = new Error(`Model output is not valid JSON: ${parseError.message || String(parseError)}`);
     wrapped.code = 'invalid_json';
     wrapped.preview = text.slice(0, 400);
     throw wrapped;
@@ -279,131 +127,6 @@ async function requestStructuredOutput({ client, agent, input, mode, repairConte
   }
 
   return parsed.data;
-}
-
-function buildRequest({ client, agent, input, mode, repairContext }) {
-  const jsonSchemaFormat = getJsonSchemaFormat(agent);
-  const userInput = buildUserInput(agent, input, repairContext);
-
-  if (mode === 'responses_json_schema') {
-    const requestData = {
-      model: agent.model,
-      instructions: agent.instructions,
-      input: userInput,
-      text: {
-        format: jsonSchemaFormat
-      }
-    };
-
-    return {
-      execute: () => client.responses.create(requestData),
-      extractText: extractResponsesText
-    };
-  }
-
-  if (mode === 'chat_json_schema') {
-    const requestData = {
-      model: agent.model,
-      messages: [
-        { role: 'system', content: agent.instructions },
-        { role: 'user', content: userInput }
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: jsonSchemaFormat.name,
-          strict: jsonSchemaFormat.strict,
-          schema: jsonSchemaFormat.schema
-        }
-      }
-    };
-
-    return {
-      execute: () => client.chat.completions.create(requestData),
-      extractText: extractChatCompletionsText
-    };
-  }
-
-  if (mode === 'chat_json_object') {
-    const requestData = {
-      model: agent.model,
-      messages: [
-        { role: 'system', content: agent.instructions },
-        { role: 'user', content: userInput }
-      ],
-      response_format: {
-        type: 'json_object'
-      }
-    };
-
-    return {
-      execute: () => client.chat.completions.create(requestData),
-      extractText: extractChatCompletionsText
-    };
-  }
-
-  if (mode === 'prompt_json') {
-    const requestData = {
-      model: agent.model,
-      messages: [
-        {
-          role: 'user',
-          content: buildPromptJsonMessage(agent, input, repairContext)
-        }
-      ]
-    };
-
-    return {
-      execute: () => client.chat.completions.create(requestData),
-      extractText: extractChatCompletionsText
-    };
-  }
-
-  throw new Error(`Unknown compatibility mode: ${mode}`);
-}
-
-function extractResponsesText(response) {
-  if (typeof response?.output_text === 'string' && response.output_text.trim()) {
-    return response.output_text.trim();
-  }
-
-  const chunks = [];
-  for (const item of response?.output || []) {
-    if (item?.type !== 'message') {
-      continue;
-    }
-    for (const content of item.content || []) {
-      if (content?.type === 'output_text' && typeof content.text === 'string') {
-        chunks.push(content.text);
-      }
-    }
-  }
-
-  return chunks.join('\n').trim();
-}
-
-function extractChatCompletionsText(response) {
-  const content = response?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') {
-    return content.trim();
-  }
-
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => {
-        if (typeof item === 'string') {
-          return item;
-        }
-        if (item && typeof item.text === 'string') {
-          return item.text;
-        }
-        return '';
-      })
-      .join('\n')
-      .trim();
-  }
-
-  return '';
 }
 
 function stripCodeFences(text) {
@@ -469,48 +192,13 @@ function compactErrorMessage(error) {
   return String(error?.message || error || 'unknown_error');
 }
 
-function isModeUnsupportedError(error) {
-  const message = compactErrorMessage(error).toLowerCase();
-  const unsupportedHints = [
-    'not supported',
-    'unsupported',
-    'unknown field',
-    'unrecognized field',
-    'extra inputs are not permitted',
-    'invalid field',
-    'invalid parameter',
-    'response_format',
-    'output_config.format.schema',
-    'text.format',
-    'json_schema',
-    'json object response format is not supported',
-    'instructions',
-    'responses api',
-    'chat.completions'
-  ];
-
-  return unsupportedHints.some((hint) => message.includes(hint));
-}
-
 module.exports = {
-  COMPATIBILITY_MODES,
-  configureOpenAIClient,
-  getCompatibilityModes,
+  configureRuntime,
   runStructuredWithRepair,
-  sanitizeJsonSchema,
   extractJsonObjectText,
-  extractResponsesText,
-  extractChatCompletionsText,
-  isModeUnsupportedError,
   __private: {
-    SUCCESS_MODE_CACHE,
-    getConfiguredHost,
     buildUserInput,
-    buildPromptJsonMessage,
-    getJsonSchemaFormat,
     requestStructuredOutput,
-    runWithMode,
-    buildRequest,
     formatIssues,
     compactErrorMessage
   }
