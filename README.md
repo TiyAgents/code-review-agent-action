@@ -1,6 +1,6 @@
 # AI Code Review Agent Action
 
-[![Build and Test](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml/badge.svg)](https://github.com/TiyAgents/code-review-agent-action/actions/workflows/self-test-current-branch.yml)
+[![Build and Test](https://github.com/tiylabs/code-review-agent-action/actions/workflows/self-test-current-branch.yml/badge.svg)](https://github.com/tiylabs/code-review-agent-action/actions/workflows/self-test-current-branch.yml)
 
 Reusable GitHub Action for automated Pull Request code review with multi-provider AI support (OpenAI, Anthropic, Google, Mistral, OpenAI-compatible) via [AI SDK](https://sdk.vercel.ai/).
 
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: AI Code Review
-        uses: TiyAgents/code-review-agent-action@v3
+        uses: tiylabs/code-review-agent-action@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           ai_provider: openai
@@ -180,7 +180,7 @@ Practical guidance:
 
 1. Push this repository to GitHub.
 2. Tag a release, for example `v1.0.0`.
-3. Consumers reference: `uses: TiyAgents/code-review-agent-action@v1`.
+3. Consumers reference: `uses: tiylabs/code-review-agent-action@v1`.
 
 ## Local Compatibility Check
 

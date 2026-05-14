@@ -20,7 +20,7 @@ jobs:
 
       - name: Run AI Code Review Action
         if: ${{ env.OPENAI_API_KEY != '' }}
-        uses: TiyAgents/code-review-agent-action@v3
+        uses: tiylabs/code-review-agent-action@v3
         with:
           # [Required] GitHub token with pull-requests:write and issues:write permissions
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -78,6 +78,14 @@ jobs:
           # Allowed range: 0.0 - 1.0 (float)
           min_finding_confidence: 0.72
 
+          # [Optional] Handling for missing/invalid confidence; default is na
+          # Allowed values: drop, na, fallback
+          missing_confidence_policy: na
+
+          # [Optional] Fallback confidence used only when missing_confidence_policy=fallback; default is 0.5
+          # Allowed range: 0.0 - 1.0 (float)
+          fallback_confidence_value: 0.5
+
           # [Optional] Round-1 coverage-first mode; default is true
           # Allowed values: true, false
           # true: first round runs only primary dimension to reduce duplicates/cost
@@ -91,6 +99,11 @@ jobs:
           # Allowed range: positive integer (>=1)
           # Rough sizing: increase with max_model_calls if many files are changed
           max_rounds: 8
+
+          # [Optional] Maximum concurrent API calls within a round; default is 4
+          # Allowed range: positive integer (>=1)
+          # Set to 1 for serial execution
+          max_concurrency: 4
 
           # [Optional] Maximum model calls; default is 40
           # Allowed range: positive integer (>=1)

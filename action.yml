@@ -2,7 +2,7 @@ name: Inline PR Review Agent
 
 description: AI-powered PR review with multi-provider support and structured output.
 
-author: TiyAgents Team
+author: tiylabs team
 
 branding:
   icon: code
