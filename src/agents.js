@@ -1,7 +1,152 @@
 const { z } = require('zod');
 const { configureRuntime, runStructuredWithRepair } = require('./model-runtime');
 
-const plannerOutputSchema = z.object({
+const SEVERITIES = ['critical', 'high', 'medium', 'low'];
+const SIDES = ['LEFT', 'RIGHT', 'FILE'];
+
+function coerceString(value) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return String(value).trim();
+}
+
+function coerceStringArray(value, maxItems = Infinity) {
+  const source = Array.isArray(value)
+    ? value.flat(Infinity)
+    : (value === undefined || value === null ? [] : [value]);
+  const seen = new Set();
+  const out = [];
+
+  for (const item of source) {
+    if (item === undefined || item === null) {
+      continue;
+    }
+    const text = (typeof item === 'object' ? JSON.stringify(item) : String(item)).trim();
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    out.push(text);
+    if (out.length >= maxItems) {
+      break;
+    }
+  }
+
+  return out;
+}
+
+function coerceBoolean(value) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+
+  const text = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'done'].includes(text)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'pending'].includes(text)) {
+    return false;
+  }
+  return false;
+}
+
+function coerceSeverity(value) {
+  const text = String(coerceString(value) || '').toLowerCase().replace(/[\s_-]+/g, '');
+  if (SEVERITIES.includes(text)) {
+    return text;
+  }
+  if (text.startsWith('crit') || text === 'blocker' || text === 'blocking') {
+    return 'critical';
+  }
+  if (text.startsWith('hi') || text === 'major') {
+    return 'high';
+  }
+  if (text.startsWith('med') || text === 'warn' || text === 'warning') {
+    return 'medium';
+  }
+  if (text.startsWith('lo') || text === 'minor' || text === 'info' || text === 'informational') {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function coerceSide(value) {
+  const text = String(coerceString(value) || '').toUpperCase();
+  if (SIDES.includes(text)) {
+    return text;
+  }
+  if (['L', 'OLD', 'REMOVED', 'DELETED', 'DELETION'].includes(text)) {
+    return 'LEFT';
+  }
+  if (['R', 'NEW', 'ADDED', 'ADDITION'].includes(text)) {
+    return 'RIGHT';
+  }
+  if (['NONE', 'GENERAL', 'OVERALL'].includes(text)) {
+    return 'FILE';
+  }
+  return 'RIGHT';
+}
+
+function coercePositiveIntegerOrNull(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const text = String(value).trim();
+  const normalized = text.replace(/^[LR#:\s]+/i, '');
+  const numberValue = typeof value === 'number' ? value : Number(normalized);
+  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : null;
+}
+
+function coerceConfidence(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const text = String(value).trim();
+  const numberValue = Number.parseFloat(text.replace('%', ''));
+  if (!Number.isFinite(numberValue)) {
+    return null;
+  }
+
+  const normalized = text.includes('%') || numberValue > 1 ? numberValue / 100 : numberValue;
+  return Math.min(1, Math.max(0, normalized));
+}
+
+function coerceObjectArray(value, itemSchema) {
+  const source = Array.isArray(value)
+    ? value
+    : (value === undefined || value === null ? [] : [value]);
+  const out = [];
+
+  for (const item of source) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue;
+    }
+    const parsed = itemSchema.safeParse(item);
+    if (parsed.success) {
+      out.push(parsed.data);
+    }
+  }
+
+  return out;
+}
+
+const requiredStringSchema = z.preprocess(coerceString, z.string().min(1));
+const optionalStringSchema = (defaultValue = '') => z.preprocess(coerceString, z.string().default(defaultValue));
+const stringArraySchema = (maxItems = Infinity) => z.preprocess(
+  (value) => coerceStringArray(value, maxItems),
+  z.array(z.string()).default([])
+);
+
+const plannerGenerationSchema = z.object({
   batches: z
     .array(
       z.object({
@@ -15,12 +160,27 @@ const plannerOutputSchema = z.object({
   notes: z.string().default('')
 });
 
-const findingSchema = z.object({
+const plannerBatchSchema = z.object({
+  focus: optionalStringSchema('general'),
+  filePaths: stringArraySchema(),
+  reason: optionalStringSchema('')
+});
+
+const plannerOutputSchema = z.object({
+  batches: z.preprocess(
+    (value) => coerceObjectArray(value, plannerBatchSchema),
+    z.array(plannerBatchSchema).default([])
+  ),
+  done: z.preprocess(coerceBoolean, z.boolean().default(false)),
+  notes: optionalStringSchema('')
+});
+
+const findingGenerationSchema = z.object({
   title: z.string().min(1),
-  severity: z.enum(['critical', 'high', 'medium', 'low']),
+  severity: z.enum(SEVERITIES),
   category: z.string().default('general'),
   path: z.string().min(1),
-  side: z.enum(['LEFT', 'RIGHT', 'FILE']).default('RIGHT'),
+  side: z.enum(SIDES).default('RIGHT'),
   line: z.number().int().positive().nullable().default(null),
   confidence: z.number().min(0).max(1).nullable().optional().default(null),
   evidence: z.array(z.string().min(1)).default([]),
@@ -30,7 +190,25 @@ const findingSchema = z.object({
   risk: z.string().default('')
 });
 
-const fileConclusionSchema = z.object({
+const findingSchema = z.object({
+  title: requiredStringSchema,
+  severity: z.preprocess(coerceSeverity, z.enum(SEVERITIES)),
+  category: optionalStringSchema('general'),
+  path: requiredStringSchema,
+  side: z.preprocess(coerceSide, z.enum(SIDES).default('RIGHT')),
+  line: z.preprocess(coercePositiveIntegerOrNull, z.number().int().positive().nullable().default(null)),
+  confidence: z.preprocess(coerceConfidence, z.number().min(0).max(1).nullable().default(null)),
+  evidence: stringArraySchema(),
+  fingerprint: z.preprocess(
+    (value) => String(coerceString(value) || '').slice(0, 120),
+    z.string().max(120).default('')
+  ),
+  summary: requiredStringSchema,
+  suggestion: optionalStringSchema(''),
+  risk: optionalStringSchema('')
+});
+
+const fileConclusionGenerationSchema = z.object({
   path: z.string().min(1),
   conclusion: z.string().min(1),
   risks: z.array(z.string()).default([]),
@@ -38,15 +216,40 @@ const fileConclusionSchema = z.object({
   note: z.string().default('')
 });
 
-const reviewOutputSchema = z.object({
+const fileConclusionSchema = z.object({
+  path: requiredStringSchema,
+  conclusion: requiredStringSchema,
+  risks: stringArraySchema(),
+  testSuggestions: stringArraySchema(),
+  note: optionalStringSchema('')
+});
+
+const reviewGenerationSchema = z.object({
   overall: z.string().min(1),
-  findings: z.array(findingSchema).default([]),
-  fileConclusions: z.array(fileConclusionSchema).default([]),
+  findings: z.array(findingGenerationSchema).default([]),
+  fileConclusions: z.array(fileConclusionGenerationSchema).default([]),
   recommendedExtraDimensions: z.array(z.string()).default([]),
   recommendationReason: z.string().default(''),
   actionableSuggestions: z.array(z.string()).default([]),
   potentialRisks: z.array(z.string()).default([]),
   testSuggestions: z.array(z.string()).default([])
+});
+
+const reviewOutputSchema = z.object({
+  overall: requiredStringSchema,
+  findings: z.preprocess(
+    (value) => coerceObjectArray(value, findingSchema),
+    z.array(findingSchema).default([])
+  ),
+  fileConclusions: z.preprocess(
+    (value) => coerceObjectArray(value, fileConclusionSchema),
+    z.array(fileConclusionSchema).default([])
+  ),
+  recommendedExtraDimensions: stringArraySchema(),
+  recommendationReason: optionalStringSchema(''),
+  actionableSuggestions: stringArraySchema(),
+  potentialRisks: stringArraySchema(),
+  testSuggestions: stringArraySchema()
 });
 
 function buildProjectGuidanceInstructions(projectGuidance) {
@@ -118,7 +321,8 @@ Output must follow the required JSON contract exactly.`;
     name: 'Review Planner',
     model,
     instructions,
-    schema: plannerOutputSchema,
+    schema: plannerGenerationSchema,
+    parseSchema: plannerOutputSchema,
     responseName: 'planner_output',
     outputContractPrompt: buildPlannerOutputContractPrompt(),
     opts: {
@@ -164,7 +368,8 @@ Output must follow the required JSON contract exactly.`;
     model,
     modelInstance: modelInstance || null,
     instructions,
-    schema: reviewOutputSchema,
+    schema: reviewGenerationSchema,
+    parseSchema: reviewOutputSchema,
     responseName: `${dimension}_review_output`,
     outputContractPrompt: buildReviewerOutputContractPrompt(),
     opts: {
@@ -333,5 +538,15 @@ module.exports = {
   buildPlannerInput,
   buildBatchReviewInput,
   plannerOutputSchema,
-  reviewOutputSchema
+  reviewOutputSchema,
+  __private: {
+    plannerGenerationSchema,
+    reviewGenerationSchema,
+    coerceBoolean,
+    coerceSeverity,
+    coerceSide,
+    coercePositiveIntegerOrNull,
+    coerceConfidence,
+    coerceStringArray
+  }
 };

@@ -137,14 +137,32 @@ test('runStructuredWithRepair handles empty output text', async () => {
   assert.ok(result.error.message.includes('empty output'));
 });
 
-test('runStructuredWithRepair handles generateText throwing', async () => {
-  let callCount = 0;
+test('runStructuredWithRepair does not fallback for non-structured generateText errors', async () => {
   const runtime = loadRuntimeWithMockedAI(async () => {
-    callCount += 1;
-    if (callCount === 1) {
-      throw new Error('API rate limit exceeded');
+    throw new Error('API rate limit exceeded');
+  });
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, false);
+  assert.match(result.error.message, /API rate limit exceeded/);
+  assert.equal(result.calls, 2);
+  assert.equal(result.repaired, true);
+});
+
+test('runStructuredWithRepair falls back to plain text JSON when structured output is unsupported', async () => {
+  const calls = [];
+  const runtime = loadRuntimeWithMockedAI(async (opts) => {
+    calls.push(opts);
+    if (opts.output) {
+      throw new Error('No object generated: response did not match schema. The feature "responseFormat" is not supported.');
     }
-    return { output: { overall: 'recovered' }, text: '{"overall":"recovered"}' };
+    return {
+      output: undefined,
+      text: '```json\n{"overall":"from fallback"}\n```'
+    };
   });
 
   runtime.configureRuntime({ model: createFakeModel() });
@@ -152,8 +170,36 @@ test('runStructuredWithRepair handles generateText throwing', async () => {
   const result = await runtime.runStructuredWithRepair(agent, 'review');
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.output, { overall: 'recovered' });
-  assert.equal(result.repaired, true);
+  assert.deepEqual(result.output, { overall: 'from fallback' });
+  assert.equal(result.calls, 1);
+  assert.equal(result.repaired, false);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].output);
+  assert.equal(calls[1].output, undefined);
+});
+
+test('runStructuredWithRepair reports structured fallback failure when text JSON fallback also fails', async () => {
+  let callCount = 0;
+  const runtime = loadRuntimeWithMockedAI(async (opts) => {
+    callCount += 1;
+    if (opts.output) {
+      throw new Error('No object generated: response did not match schema.');
+    }
+    return {
+      output: undefined,
+      text: 'not json'
+    };
+  });
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = createAgent();
+  const result = await runtime.runStructuredWithRepair(agent, 'review', { allowRepair: false });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'structured_text_fallback_failed');
+  assert.match(result.error.message, /structured_text_fallback_failed/);
+  assert.match(result.error.message, /original_error: No object generated/);
+  assert.equal(callCount, 2);
 });
 
 test('configureRuntime throws when model is falsy', () => {
@@ -212,6 +258,25 @@ test('requestStructuredOutput falls back to runtimeState.model when agent.modelI
 
   assert.equal(result.ok, true);
   assert.equal(usedModel, defaultModel);
+});
+
+test('runStructuredWithRepair validates model output through parseSchema when provided', async () => {
+  const runtime = loadRuntimeWithMockedAI(async () => ({
+    output: { overall: 123 },
+    text: '{}'
+  }));
+
+  runtime.configureRuntime({ model: createFakeModel() });
+  const agent = {
+    ...createAgent(),
+    parseSchema: z.object({
+      overall: z.preprocess((value) => String(value), z.string())
+    })
+  };
+  const result = await runtime.runStructuredWithRepair(agent, 'review');
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.output, { overall: '123' });
 });
 
 test('schema validation failure on first attempt triggers repair', async () => {

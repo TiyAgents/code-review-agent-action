@@ -6,7 +6,7 @@ function loadAgents() {
   return require('../src/agents');
 }
 
-test('createReviewerAgent schema accepts nullable/omitted confidence and rejects invalid confidence', () => {
+test('createReviewerAgent schema normalizes nullable, omitted, and string confidence', () => {
   const { createReviewerAgent } = loadAgents();
   const agent = createReviewerAgent({
     dimension: 'general',
@@ -60,8 +60,173 @@ test('createReviewerAgent schema accepts nullable/omitted confidence and rejects
   });
   assert.equal(parsedNumeric.findings[0].confidence, 0.9);
 
+  const parsedString = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'String confidence',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: '0.9',
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedString.findings[0].confidence, 0.9);
+
+  const parsedPercent = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'Percent confidence',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: '90%',
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedPercent.findings[0].confidence, 0.9);
+
+  const parsedOutOfRange = schema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'Out-of-range confidence',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: 120,
+        evidence: ['e1']
+      }
+    ]
+  });
+  assert.equal(parsedOutOfRange.findings[0].confidence, 1);
+});
+
+test('createPlannerAgent schema normalizes planner batches and done values', () => {
+  const { createPlannerAgent } = loadAgents();
+  const agent = createPlannerAgent({ model: 'gpt-test', projectGuidance: null });
+
+  const parsed = agent.opts.outputType.parse({
+    batches: [
+      {
+        focus: 123,
+        filePaths: 'src/a.js',
+        reason: null
+      },
+      {
+        focus: 'empty',
+        filePaths: [null, '', 'src/b.js', 'src/b.js'],
+        reason: 'keep one path'
+      }
+    ],
+    done: 'true',
+    notes: 42
+  });
+
+  assert.equal(parsed.done, true);
+  assert.equal(parsed.notes, '42');
+  assert.deepEqual(parsed.batches[0], {
+    focus: '123',
+    filePaths: ['src/a.js'],
+    reason: ''
+  });
+  assert.deepEqual(parsed.batches[1].filePaths, ['src/b.js']);
+});
+
+test('createReviewerAgent schema normalizes common model field drift', () => {
+  const { createReviewerAgent } = loadAgents();
+  const agent = createReviewerAgent({
+    dimension: 'general',
+    model: 'gpt-test',
+    language: 'English',
+    projectGuidance: null
+  });
+
+  const parsed = agent.opts.outputType.parse({
+    overall: 123,
+    findings: [
+      {
+        title: 456,
+        severity: 'Warning',
+        category: null,
+        path: 'src/a.js',
+        side: 'right',
+        line: 'R42',
+        confidence: '90%',
+        evidence: 'single evidence',
+        fingerprint: 'x'.repeat(140),
+        summary: 'summary',
+        suggestion: 789,
+        risk: null
+      },
+      {
+        title: 'missing path should be dropped',
+        severity: 'high',
+        summary: 'invalid finding'
+      }
+    ],
+    fileConclusions: [
+      {
+        path: 'src/a.js',
+        conclusion: 100,
+        risks: 'risk text',
+        testSuggestions: [null, 'test one'],
+        note: null
+      }
+    ],
+    recommendedExtraDimensions: 'security',
+    recommendationReason: null,
+    actionableSuggestions: ['do this', 99],
+    potentialRisks: null,
+    testSuggestions: 'add tests'
+  });
+
+  assert.equal(parsed.overall, '123');
+  assert.equal(parsed.findings.length, 1);
+  assert.deepEqual(parsed.findings[0], {
+    title: '456',
+    severity: 'medium',
+    category: 'general',
+    path: 'src/a.js',
+    side: 'RIGHT',
+    line: 42,
+    confidence: 0.9,
+    evidence: ['single evidence'],
+    fingerprint: 'x'.repeat(120),
+    summary: 'summary',
+    suggestion: '789',
+    risk: ''
+  });
+  assert.deepEqual(parsed.fileConclusions[0], {
+    path: 'src/a.js',
+    conclusion: '100',
+    risks: ['risk text'],
+    testSuggestions: ['test one'],
+    note: ''
+  });
+  assert.deepEqual(parsed.recommendedExtraDimensions, ['security']);
+  assert.equal(parsed.recommendationReason, '');
+  assert.deepEqual(parsed.actionableSuggestions, ['do this', '99']);
+  assert.deepEqual(parsed.potentialRisks, []);
+  assert.deepEqual(parsed.testSuggestions, ['add tests']);
+});
+
+test('createReviewerAgent exposes strict generation schema and tolerant parse schema', () => {
+  const { createReviewerAgent } = loadAgents();
+  const agent = createReviewerAgent({
+    dimension: 'general',
+    model: 'gpt-test',
+    language: 'English',
+    projectGuidance: null
+  });
+
+  assert.notEqual(agent.schema, agent.parseSchema);
   assert.throws(
-    () => schema.parse({
+    () => agent.schema.parse({
       overall: 'ok',
       findings: [
         {
@@ -69,30 +234,26 @@ test('createReviewerAgent schema accepts nullable/omitted confidence and rejects
           severity: 'low',
           path: 'src/a.js',
           summary: 'desc',
-          confidence: '0.9',
-          evidence: ['e1']
+          confidence: '0.9'
         }
       ]
     }),
     /Expected number, received string/
   );
 
-  assert.throws(
-    () => schema.parse({
-      overall: 'ok',
-      findings: [
-        {
-          title: 'Out-of-range confidence',
-          severity: 'low',
-          path: 'src/a.js',
-          summary: 'desc',
-          confidence: 1.2,
-          evidence: ['e1']
-        }
-      ]
-    }),
-    /Number must be less than or equal to 1/
-  );
+  const parsed = agent.parseSchema.parse({
+    overall: 'ok',
+    findings: [
+      {
+        title: 'String confidence',
+        severity: 'low',
+        path: 'src/a.js',
+        summary: 'desc',
+        confidence: '0.9'
+      }
+    ]
+  });
+  assert.equal(parsed.findings[0].confidence, 0.9);
 });
 
 test('buildBatchReviewInput keeps additional file with truncation at boundary', () => {
