@@ -65,13 +65,13 @@ function coerceSeverity(value) {
   if (text.startsWith('crit') || text === 'blocker' || text === 'blocking') {
     return 'critical';
   }
-  if (text.startsWith('hi') || text === 'major') {
+  if (text === 'hi' || text === 'major') {
     return 'high';
   }
   if (text.startsWith('med') || text === 'warn' || text === 'warning') {
     return 'medium';
   }
-  if (text.startsWith('lo') || text === 'minor' || text === 'info' || text === 'informational') {
+  if (text.startsWith('lo') || text === 'minor' || text === 'info' || text === 'informational' || text === 'hint') {
     return 'low';
   }
   return 'medium';
@@ -116,7 +116,7 @@ function coerceConfidence(value) {
     return null;
   }
 
-  const normalized = text.includes('%') || numberValue > 1 ? numberValue / 100 : numberValue;
+  const normalized = text.includes('%') ? numberValue / 100 : numberValue;
   return Math.min(1, Math.max(0, normalized));
 }
 
