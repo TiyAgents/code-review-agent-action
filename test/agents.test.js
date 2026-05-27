@@ -168,6 +168,25 @@ test('createPlannerAgent schema normalizes planner batches and done values', () 
     reason: ''
   });
   assert.deepEqual(parsed.batches[1].filePaths, ['src/b.js']);
+
+  // done boundary tests
+  const doneCases = [
+    ['false', false],
+    [0, false],
+    ['', false],
+    ['no', false],
+    ['n', false],
+    ['pending', false],
+    [null, false],
+    [undefined, false]
+  ];
+  for (const [input, expected] of doneCases) {
+    const result = agent.opts.outputType.parse({
+      batches: [],
+      done: input
+    });
+    assert.equal(result.done, expected, `done=${JSON.stringify(input)} should be ${expected}`);
+  }
 });
 
 test('createReviewerAgent schema normalizes common model field drift', () => {
@@ -255,6 +274,36 @@ test('createReviewerAgent schema normalizes common model field drift', () => {
   assert.deepEqual(parsed.actionableSuggestions, ['do this', '99']);
   assert.deepEqual(parsed.potentialRisks, []);
   assert.deepEqual(parsed.testSuggestions, ['add tests']);
+
+  // side boundary tests
+  const sideCases = [
+    ['left', 'LEFT'],
+    ['LEFT', 'LEFT'],
+    ['l', 'LEFT'],
+    ['FILE', 'FILE'],
+    ['file', 'FILE'],
+    ['none', 'FILE'],
+    ['general', 'FILE'],
+    ['center', 'RIGHT'],
+    ['both', 'RIGHT'],
+    ['', 'RIGHT']
+  ];
+  for (const [input, expected] of sideCases) {
+    const sideResult = agent.opts.outputType.parse({
+      overall: 'ok',
+      findings: [
+        {
+          title: `Side ${input}`,
+          severity: 'low',
+          path: 'src/a.js',
+          summary: 'desc',
+          side: input,
+          evidence: ['e1']
+        }
+      ]
+    });
+    assert.equal(sideResult.findings[0].side, expected, `side=${JSON.stringify(input)} should be ${expected}`);
+  }
 });
 
 test('createReviewerAgent exposes strict generation schema and tolerant parse schema', () => {
@@ -426,4 +475,135 @@ test('buildBatchReviewInput preserves line anchors for code starting with +++ an
 
   assert.match(result.prompt, /\[L1\|R-\] - ---old/);
   assert.match(result.prompt, /\[L-\|R1\] \+ \+\+\+new/);
+});
+
+// --- Direct coerce function unit tests ---
+
+test('coerceSeverity maps standard values and common aliases', () => {
+  const { __private } = loadAgents();
+  const cs = __private.coerceSeverity;
+  assert.equal(cs('critical'), 'critical');
+  assert.equal(cs('high'), 'high');
+  assert.equal(cs('medium'), 'medium');
+  assert.equal(cs('low'), 'low');
+  assert.equal(cs('CRITICAL'), 'critical');
+  assert.equal(cs('High'), 'high');
+  assert.equal(cs('blocker'), 'critical');
+  assert.equal(cs('blocking'), 'critical');
+  assert.equal(cs('major'), 'high');
+  assert.equal(cs('hi'), 'high');
+  assert.equal(cs('warning'), 'medium');
+  assert.equal(cs('warn'), 'medium');
+  assert.equal(cs('minor'), 'low');
+  assert.equal(cs('info'), 'low');
+  assert.equal(cs('informational'), 'low');
+  assert.equal(cs('hint'), 'low');
+  assert.equal(cs('unknown'), 'medium');
+  assert.equal(cs(''), 'medium');
+});
+
+test('coerceSide maps standard values and common aliases', () => {
+  const { __private } = loadAgents();
+  const cs = __private.coerceSide;
+  assert.equal(cs('LEFT'), 'LEFT');
+  assert.equal(cs('RIGHT'), 'RIGHT');
+  assert.equal(cs('FILE'), 'FILE');
+  assert.equal(cs('left'), 'LEFT');
+  assert.equal(cs('right'), 'RIGHT');
+  assert.equal(cs('file'), 'FILE');
+  assert.equal(cs('L'), 'LEFT');
+  assert.equal(cs('OLD'), 'LEFT');
+  assert.equal(cs('REMOVED'), 'LEFT');
+  assert.equal(cs('DELETED'), 'LEFT');
+  assert.equal(cs('DELETION'), 'LEFT');
+  assert.equal(cs('R'), 'RIGHT');
+  assert.equal(cs('NEW'), 'RIGHT');
+  assert.equal(cs('ADDED'), 'RIGHT');
+  assert.equal(cs('ADDITION'), 'RIGHT');
+  assert.equal(cs('NONE'), 'FILE');
+  assert.equal(cs('GENERAL'), 'FILE');
+  assert.equal(cs('OVERALL'), 'FILE');
+  assert.equal(cs('center'), 'RIGHT');
+  assert.equal(cs('both'), 'RIGHT');
+  assert.equal(cs(''), 'RIGHT');
+});
+
+test('coercePositiveIntegerOrNull handles various inputs', () => {
+  const { __private } = loadAgents();
+  const cp = __private.coercePositiveIntegerOrNull;
+  assert.equal(cp(42), 42);
+  assert.equal(cp(1), 1);
+  assert.equal(cp('42'), 42);
+  assert.equal(cp('R42'), 42);
+  assert.equal(cp('L42'), 42);
+  assert.equal(cp('R:42'), 42);
+  assert.equal(cp('#42'), 42);
+  assert.equal(cp(0), null);
+  assert.equal(cp(-1), null);
+  assert.equal(cp('R0'), null);
+  assert.equal(cp('R-1'), null);
+  assert.equal(cp('abc'), null);
+  assert.equal(cp(''), null);
+  assert.equal(cp(null), null);
+  assert.equal(cp(undefined), null);
+  assert.equal(cp(3.14), null);
+  assert.equal(cp('42R'), null);
+});
+
+test('coerceConfidence handles numeric, string, percent, and edge cases', () => {
+  const { __private } = loadAgents();
+  const cc = __private.coerceConfidence;
+  assert.equal(cc(0), 0);
+  assert.equal(cc(0.5), 0.5);
+  assert.equal(cc(1), 1);
+  assert.equal(cc(1.5), 1);
+  assert.equal(cc(100), 1);
+  assert.equal(cc('0.9'), 0.9);
+  assert.equal(cc('90%'), 0.9);
+  assert.equal(cc('100%'), 1);
+  assert.equal(cc('150%'), 1);
+  assert.equal(cc(-0.5), 0);
+  assert.equal(cc(null), null);
+  assert.equal(cc(undefined), null);
+  assert.equal(cc(''), null);
+  assert.equal(cc('not-a-number'), null);
+  assert.equal(cc(Infinity), null);
+  assert.equal(cc(NaN), null);
+});
+
+test('coerceBoolean handles various truthy and falsy inputs', () => {
+  const { __private } = loadAgents();
+  const cb = __private.coerceBoolean;
+  assert.equal(cb(true), true);
+  assert.equal(cb(false), false);
+  assert.equal(cb(1), true);
+  assert.equal(cb(0), false);
+  assert.equal(cb('true'), true);
+  assert.equal(cb('1'), true);
+  assert.equal(cb('yes'), true);
+  assert.equal(cb('y'), true);
+  assert.equal(cb('done'), true);
+  assert.equal(cb('false'), false);
+  assert.equal(cb('0'), false);
+  assert.equal(cb('no'), false);
+  assert.equal(cb('n'), false);
+  assert.equal(cb('pending'), false);
+  assert.equal(cb('complete'), false);
+  assert.equal(cb('finished'), false);
+  assert.equal(cb(''), false);
+  assert.equal(cb(undefined), undefined);
+  assert.equal(cb(null), undefined);
+});
+
+test('coerceStringArray deduplicates, flattens, and filters', () => {
+  const { __private } = loadAgents();
+  const csa = __private.coerceStringArray;
+  assert.deepEqual(csa(['a', 'b', 'a']), ['a', 'b']);
+  assert.deepEqual(csa(['a', null, '', 'b']), ['a', 'b']);
+  assert.deepEqual(csa('single'), ['single']);
+  assert.deepEqual(csa(null), []);
+  assert.deepEqual(csa(undefined), []);
+  assert.deepEqual(csa([null, undefined]), []);
+  assert.deepEqual(csa(['a', 'b', 'c', 'd'], 2), ['a', 'b']);
+  assert.deepEqual(csa([[1, 2], 'a']), ['1', '2', 'a']);
 });
