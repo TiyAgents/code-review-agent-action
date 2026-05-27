@@ -87,22 +87,70 @@ async function requestStructuredOutput({ agent, input, repairContext }) {
   const userPrompt = buildUserInput(agent, input, repairContext);
   const model = agent.modelInstance || runtimeState.model;
 
+  try {
+    const result = await generateText({
+      model,
+      system: agent.instructions,
+      prompt: userPrompt,
+      output: Output.object({ schema: agent.schema })
+    });
+
+    return parseGenerateTextResult(agent, result);
+  } catch (error) {
+    if (!shouldFallbackToTextJson(error)) {
+      throw error;
+    }
+
+    try {
+      return await requestTextJsonOutput({ agent, userPrompt, model });
+    } catch (fallbackError) {
+      const wrapped = new Error(
+        `structured_text_fallback_failed: ${compactErrorMessage(fallbackError)}; original_error: ${compactErrorMessage(error)}`
+      );
+      wrapped.code = 'structured_text_fallback_failed';
+      wrapped.preview = fallbackError.preview;
+      throw wrapped;
+    }
+  }
+}
+
+async function requestTextJsonOutput({ agent, userPrompt, model }) {
   const result = await generateText({
     model,
     system: agent.instructions,
-    prompt: userPrompt,
-    output: Output.object({ schema: agent.schema })
+    prompt: userPrompt
   });
 
-  // AI SDK sets output to the parsed object when successful
+  return parseGenerateTextResult(agent, result);
+}
+
+function parseGenerateTextResult(agent, result) {
+  // AI SDK sets output to the parsed object when successful.
   if (result.output !== undefined && result.output !== null) {
-    return result.output;
+    return parseStructuredObject(agent, result.output);
   }
 
+  return parseStructuredText(agent, result.text || '');
+}
+
+function parseStructuredObject(agent, outputObject) {
+  const schema = agent.parseSchema || agent.schema;
+  const parsed = schema.safeParse(outputObject);
+  if (!parsed.success) {
+    const error = new Error(`schema_validation_failed: ${formatIssues(parsed.error.issues)}`);
+    error.code = 'schema_validation_failed';
+    error.preview = JSON.stringify(outputObject).slice(0, 400);
+    throw error;
+  }
+
+  return parsed.data;
+}
+
+function parseStructuredText(agent, rawText) {
   // Fallback: some providers may return text but fail structured parsing.
   // AI SDK sets output=null when schema validation fails internally,
   // so we attempt manual JSON extraction from the raw text as a safety net.
-  const text = (result.text || '').trim();
+  const text = String(rawText || '').trim();
   if (!text) {
     const error = new Error('Model returned empty output text.');
     error.code = 'empty_output';
@@ -119,7 +167,8 @@ async function requestStructuredOutput({ agent, input, repairContext }) {
     throw wrapped;
   }
 
-  const parsed = agent.schema.safeParse(parsedObject);
+  const schema = agent.parseSchema || agent.schema;
+  const parsed = schema.safeParse(parsedObject);
   if (!parsed.success) {
     const error = new Error(`schema_validation_failed: ${formatIssues(parsed.error.issues)}`);
     error.code = 'schema_validation_failed';
@@ -128,6 +177,21 @@ async function requestStructuredOutput({ agent, input, repairContext }) {
   }
 
   return parsed.data;
+}
+
+function shouldFallbackToTextJson(error) {
+  const message = compactErrorMessage(error).toLowerCase();
+  return (
+    message.includes('responseformat') ||
+    message.includes('response format') ||
+    message.includes('structured output') ||
+    message.includes('structured-output') ||
+    message.includes('no object generated') ||
+    message.includes('response did not match schema') ||
+    (message.includes('schema') && message.includes('object generated')) ||
+    (message.includes('not supported') && message.includes('json')) ||
+    (message.includes('unsupported') && message.includes('json'))
+  );
 }
 
 function stripCodeFences(text) {
@@ -200,6 +264,11 @@ module.exports = {
   __private: {
     buildUserInput,
     requestStructuredOutput,
+    requestTextJsonOutput,
+    parseGenerateTextResult,
+    parseStructuredObject,
+    parseStructuredText,
+    shouldFallbackToTextJson,
     formatIssues,
     compactErrorMessage
   }
