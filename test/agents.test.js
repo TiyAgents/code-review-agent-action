@@ -75,6 +75,39 @@ test('createReviewerAgent schema normalizes nullable, omitted, and string confid
   });
   assert.equal(parsedString.findings[0].confidence, 0.9);
 
+  const confidenceCases = [
+    [0, 0],
+    [0.5, 0.5],
+    [0.99, 0.99],
+    [1, 1],
+    [1.01, 1],
+    [1.5, 1],
+    [50, 1],
+    [100, 1],
+    [150, 1],
+    [-0.5, 0],
+    [Number.NaN, null],
+    [Infinity, null],
+    ['not-a-number', null]
+  ];
+
+  for (const [input, expected] of confidenceCases) {
+    const parsed = schema.parse({
+      overall: 'ok',
+      findings: [
+        {
+          title: `Confidence ${String(input)}`,
+          severity: 'low',
+          path: 'src/a.js',
+          summary: 'desc',
+          confidence: input,
+          evidence: ['e1']
+        }
+      ]
+    });
+    assert.equal(parsed.findings[0].confidence, expected);
+  }
+
   const parsedPercent = schema.parse({
     overall: 'ok',
     findings: [
@@ -164,6 +197,13 @@ test('createReviewerAgent schema normalizes common model field drift', () => {
         risk: null
       },
       {
+        title: 'Hint severity',
+        severity: 'hint',
+        path: 'src/b.js',
+        summary: 'hint should be low',
+        evidence: ['e2']
+      },
+      {
         title: 'missing path should be dropped',
         severity: 'high',
         summary: 'invalid finding'
@@ -186,7 +226,7 @@ test('createReviewerAgent schema normalizes common model field drift', () => {
   });
 
   assert.equal(parsed.overall, '123');
-  assert.equal(parsed.findings.length, 1);
+  assert.equal(parsed.findings.length, 2);
   assert.deepEqual(parsed.findings[0], {
     title: '456',
     severity: 'medium',
@@ -201,6 +241,8 @@ test('createReviewerAgent schema normalizes common model field drift', () => {
     suggestion: '789',
     risk: ''
   });
+  assert.equal(parsed.findings[1].severity, 'low');
+  assert.equal(parsed.findings[1].title, 'Hint severity');
   assert.deepEqual(parsed.fileConclusions[0], {
     path: 'src/a.js',
     conclusion: '100',
@@ -240,6 +282,23 @@ test('createReviewerAgent exposes strict generation schema and tolerant parse sc
     }),
     /Expected number, received string/
   );
+  for (const invalidConfidence of [1.2, -0.5]) {
+    assert.throws(
+      () => agent.schema.parse({
+        overall: 'ok',
+        findings: [
+          {
+            title: 'Out-of-range confidence',
+            severity: 'low',
+            path: 'src/a.js',
+            summary: 'desc',
+            confidence: invalidConfidence
+          }
+        ]
+      }),
+      /Number must be (less than or equal to 1|greater than or equal to 0)/
+    );
+  }
 
   const parsed = agent.parseSchema.parse({
     overall: 'ok',
